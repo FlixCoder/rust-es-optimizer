@@ -1,0 +1,28 @@
+[package]
+name = "es-opt"
+version = "0.0.1"
+authors = ["FlixCoder"]
+
+[dependencies]
+rand = "0.5.*"
+
+
+[profile.dev]
+opt-level = 3
+lto = false
+panic = "unwind"
+debug = true
+debug-assertions = true
+
+[profile.test]
+opt-level = 0
+lto = false
+debug = true
+debug-assertions = true
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "unwind"
+debug = false
+debug-assertions = false
