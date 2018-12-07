@@ -6,6 +6,8 @@ use rand::distributions::{Normal, Distribution};
 
 //TODO:
 //add Adam optimizer?
+//make parallel
+//adjust std to parameter values (std ~ param std)
 
 
 /// Definition of the optimizer traits, to dynamically allow different optimizers
@@ -25,6 +27,7 @@ pub struct SGD
     lr:f64, //learning rate
     lambda:f64, //weight decay coefficient
     beta:f64, //momentum coefficient
+    lastv:Vec<f64>, //last momentum gradient
 }
 
 impl SGD
@@ -32,7 +35,7 @@ impl SGD
     /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
     pub fn new() -> SGD
     {
-        SGD { lr: 0.01, lambda: 0.0, beta: 0.0 }
+        SGD { lr: 0.01, lambda: 0.0, beta: 0.0, lastv: vec![0.0] }
     }
     
     pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
@@ -76,7 +79,26 @@ impl Optimizer for SGD
     /// Compute delta update from params and gradient
     fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
     {
-        vec![0.0; 2]
+        if self.lastv.len() != params.len()
+        {
+            self.lastv = vec![0.0; params.len()];
+        }
+        
+        //momentum SGD update
+        mul_scalar(&mut self.lastv, self.beta);
+        let mut gradcopy = grad.clone();
+        mul_scalar(&mut gradcopy, 1.0 - self.beta);
+        add_inplace(&mut self.lastv, &gradcopy);
+        gradcopy = self.lastv.clone();
+        mul_scalar(&mut gradcopy, self.lr);
+        
+        //weight decay
+        let mut wdecay = params.clone();
+        mul_scalar(&mut wdecay, -self.lr * self.lambda);
+        add_inplace(&mut gradcopy, &wdecay);
+        
+        //return
+        gradcopy
     }
 }
 
@@ -92,7 +114,7 @@ pub struct ES<Feval, Opt:Optimizer>
     eval:Feval, //evaluator function
     
     std:f64, //standard deviation to calculate the noise for parameters
-    samples:usize, //number of samples per step to approximate the gradient
+    samples:usize, //number of mirror-samples per step to approximate the gradient
 }
 
 impl<Feval, Opt:Optimizer> ES<Feval, Opt>
@@ -105,7 +127,7 @@ impl<Feval, Opt:Optimizer> ES<Feval, Opt>
     pub fn new(optimizer:Opt, params:Vec<f64>, evaluator:Feval) -> ES<Feval, Opt>
     {
         let dim = params.len();
-        ES { dim: dim, params: params, opt: optimizer, eval: evaluator, std: 0.1, samples: 500 }
+        ES { dim: dim, params: params, opt: optimizer, eval: evaluator, std: 0.05, samples: 500 }
     }
     
     /// Change the optimizer
@@ -146,7 +168,8 @@ impl<Feval, Opt:Optimizer> ES<Feval, Opt>
         self
     }
     
-    /// Set the number of samples per step to approximate the gradient
+    /// Set the number of mirror-samples per step to approximate the gradient
+    /// Was probably around 700 in paper (1400 workers)
     pub fn set_samples(&mut self, num:usize) -> &mut Self
     {
         if num == 0
