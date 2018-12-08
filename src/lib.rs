@@ -7,8 +7,8 @@ use rand::distributions::{Normal, Distribution};
 //TODO:
 //add Adam optimizer?
 //make parallel
-//adapt std to parameter/gradient values (std ~ param std)
-//adapt lr to gradient/parameter sizes
+//adapt std to parameter/gradient values (std ~ param std)?
+//adapt lr to gradient/parameter sizes?
 
 
 /// Definition of evaluator traits
@@ -162,7 +162,9 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
     }
     
     /// Set noise's standard deviation (applied to the parameters)
-    /// Humanoid example in the paper used 0.02 as an example
+    /// Humanoid example in the paper used 0.02 as an example.
+    /// Probably best to choose in dependence of evaluator output size.
+    /// Tweak learning rate to fit to the std.
     pub fn set_std(&mut self, noise:f64) -> &mut Self
     {
         if noise <= 0.0
@@ -237,7 +239,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
 }
 
 /// Generate a vector of random numbers with 0 mean and std std, normally distributed.
-fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
+pub fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
 {
     let mut rng = rand::thread_rng();
     let normal = Normal::new(0.0, std);

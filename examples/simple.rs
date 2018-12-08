@@ -7,7 +7,7 @@ fn main()
 {
     //initialize required objects
     let mut opt = SGD::new(); //SGA optimizer (named SGD)
-    opt.set_lr(0.5) //learning rate
+    opt.set_lr(0.75) //learning rate
         .set_beta(0.0) //momentum factor
         .set_lambda(0.0); //weight decay coefficient
     
@@ -16,13 +16,13 @@ fn main()
     //create ES-Optimizer
     let mut es = ES::new(opt, eval); //Evolution-Strategy-Optimizer using optimizer and evaluator
     es.set_params(vec![0.0]) //initial parameters (important to specify the problem dimension, default is vec![0.0])
-        .set_std(1.0) //parameter noise standard deviation to approximate the gradient
+        .set_std(50.0) //parameter noise standard deviation to approximate the gradient
         .set_samples(50); //number of mirrored samples to use to approximate the gradient
     
     //track the optimizer's results
     for _ in 0..5
     {
-        let res = es.optimize(15); //optimize for n steps
+        let res = es.optimize(2); //optimize for n steps
         println!("(Score, Gradnorm): {:?}", res);
         println!("Params: {:?}", es.get_params());
     }
