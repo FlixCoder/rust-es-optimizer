@@ -7,8 +7,17 @@ use rand::distributions::{Normal, Distribution};
 //TODO:
 //add Adam optimizer?
 //make parallel
-//adjust std to parameter values (std ~ param std)
+//adapt std to parameter/gradient values (std ~ param std)
+//adapt lr to gradient/parameter sizes
 
+
+/// Definition of evaluator traits
+pub trait Evaluator
+{
+    /// Function to evaluate a set of parameters given as parameter
+    /// Return the score towards the target (optimizer maximizes)
+    fn eval(&self, &Vec<f64>) -> f64;
+}
 
 /// Definition of the optimizer traits, to dynamically allow different optimizers
 pub trait Optimizer
@@ -80,7 +89,7 @@ impl Optimizer for SGD
     fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
     {
         if self.lastv.len() != params.len()
-        {
+        { //initialize with zero gradient
             self.lastv = vec![0.0; params.len()];
         }
         
@@ -105,8 +114,7 @@ impl Optimizer for SGD
 
 /// Evolution-Strategy optimizer class. Optimizes given parameters towards a maximum evaluation-score.
 #[derive(Clone)]
-pub struct ES<Feval, Opt:Optimizer>
-    where Feval: Fn(&Vec<f64>) -> f64
+pub struct ES<Feval:Evaluator+Clone, Opt:Optimizer+Clone>
 {
     dim:usize, //problem dimensionality
     params:Vec<f64>, //current parameters
@@ -117,17 +125,15 @@ pub struct ES<Feval, Opt:Optimizer>
     samples:usize, //number of mirror-samples per step to approximate the gradient
 }
 
-impl<Feval, Opt:Optimizer> ES<Feval, Opt>
-    where Feval: Fn(&Vec<f64>) -> f64
+impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
 {
     /// Create a new ES-Optimizer
     /// params = set of parameters to optimize
     /// evaluator = function that computes the objetive-score based on the paramters
     /// default optimizer is SGD (which is actually SGA = stochastic gradient ascent)
-    pub fn new(optimizer:Opt, params:Vec<f64>, evaluator:Feval) -> ES<Feval, Opt>
+    pub fn new(optimizer:Opt, evaluator:Feval) -> ES<Feval, Opt>
     {
-        let dim = params.len();
-        ES { dim: dim, params: params, opt: optimizer, eval: evaluator, std: 0.05, samples: 500 }
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.05, samples: 500 }
     }
     
     /// Change the optimizer
@@ -205,17 +211,19 @@ impl<Feval, Opt:Optimizer> ES<Feval, Opt>
             grad = vec![0.0; self.dim];
             for _j in 0..self.samples
             {
-                let mut eps = gen_rnd_vec(self.dim, self.std);
-                let mut negeps = eps.clone();
-                mul_scalar(&mut negeps, -1.0);
-                add_inplace(&mut eps, &self.params);
-                add_inplace(&mut negeps, &self.params);
-                let score = (self.eval)(&eps);
-                mul_scalar(&mut eps, score);
-                add_inplace(&mut grad, &eps);
-                let score = (self.eval)(&negeps);
-                mul_scalar(&mut negeps, score);
-                add_inplace(&mut grad, &negeps);
+                let mut testparampos = gen_rnd_vec(self.dim, self.std);
+                let mut epspos = testparampos.clone();
+                let mut testparamneg = testparampos.clone();
+                mul_scalar(&mut testparamneg, -1.0);
+                let mut epsneg = testparamneg.clone();
+                add_inplace(&mut testparampos, &self.params);
+                add_inplace(&mut testparamneg, &self.params);
+                let score = self.eval.eval(&testparampos);
+                mul_scalar(&mut epspos, score);
+                add_inplace(&mut grad, &epspos);
+                let score = self.eval.eval(&testparamneg);
+                mul_scalar(&mut epsneg, score);
+                add_inplace(&mut grad, &epsneg);
             }
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
@@ -224,7 +232,7 @@ impl<Feval, Opt:Optimizer> ES<Feval, Opt>
             add_inplace(&mut self.params, &delta);
         }
         
-        ((self.eval)(&self.params), norm(&grad))
+        (self.eval.eval(&self.params), norm(&grad))
     }
 }
 
@@ -265,7 +273,7 @@ fn norm(vec:&Vec<f64>) -> f64
     let mut norm = 0.0;
     for val in vec.iter()
     {
-        norm += *val;
+        norm += *val * *val;
     }
-    norm / vec.len() as f64
+    norm.sqrt()
 }
