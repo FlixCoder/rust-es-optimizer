@@ -1,8 +1,10 @@
 //! General implementation of the ES strategy described in https://arxiv.org/pdf/1703.03864.pdf
 
 extern crate rand;
+extern crate rayon;
 
 use rand::distributions::{Normal, Distribution};
+use rayon::prelude::*;
 
 //TODO:
 //add Adam optimizer?
@@ -211,7 +213,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
         {
             //approximate gradient with self.samples double-sided samples
             grad = vec![0.0; self.dim];
-            for _j in 0..self.samples
+            for _ in 0..self.samples
             {
                 let mut testparampos = gen_rnd_vec(self.dim, self.std);
                 let mut epspos = testparampos.clone();
@@ -226,6 +228,51 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
                 let score = self.eval.eval(&testparamneg);
                 mul_scalar(&mut epsneg, score);
                 add_inplace(&mut grad, &epsneg);
+            }
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            //calculate the delta update using the optimizer
+            let delta = self.opt.get_delta(&self.params, &grad);
+            //update the parameters
+            add_inplace(&mut self.params, &delta);
+        }
+        
+        (self.eval.eval(&self.params), norm(&grad))
+    }
+    
+    /// Optimize for n steps (evaluation in parallel)
+    /// Optimizer and Evaluator must satisfy the Sync trait
+    /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
+    pub fn optimize_par(&mut self, n:usize) -> (f64, f64)
+        where Opt:Sync, Feval:Sync
+    {
+        let mut grad = vec![0.0; self.dim];
+        //for n iterations:
+        for _i in 0..n
+        {
+            //approximate gradient with self.samples double-sided samples
+            //first generate a set of eps vectors
+            let mut epsvec = Vec::new();
+            for _ in 0..self.samples
+            {
+                let mut eps = gen_rnd_vec(self.dim, self.std);
+                epsvec.push(eps.clone());
+                mul_scalar(&mut eps, -1.0);
+                epsvec.push(eps);
+            }
+            //then evaluate them in parallel
+            epsvec.par_iter_mut().for_each(|eps|
+                {
+                    let mut testparam = eps.clone();
+                    add_inplace(&mut testparam, &self.params);
+                    let score = self.eval.eval(&testparam);
+                    mul_scalar(eps, score);
+                });
+            //afterwards add up the results to compute the gradient
+            grad = epsvec.pop().expect("Number of sample was zero - impossible!");
+            while !epsvec.is_empty()
+            {
+                let res = epsvec.pop().expect("Epsvec.is_empty did not work!");
+                add_inplace(&mut grad, &res);
             }
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer

@@ -43,7 +43,7 @@ fn main()
     for i in 0..5
     {
         let n = 200;
-        let res = es.optimize(n); //optimize for n steps
+        let res = es.optimize_par(n); //optimize for n steps
         println!("After {:5} iterations:", (i+1) * n);
         println!("-MAE: {:7.4}", res.0);
         println!("Gradnorm: {:7.5}", res.1);

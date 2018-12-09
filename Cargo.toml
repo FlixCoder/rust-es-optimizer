@@ -1,10 +1,11 @@
 [package]
 name = "esopt"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["FlixCoder"]
 
 [dependencies]
 rand = "0.5.*"
+rayon = "0.9.*"
 
 
 [profile.dev]
