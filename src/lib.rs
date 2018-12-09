@@ -126,30 +126,45 @@ pub struct ES<Feval:Evaluator+Clone, Opt:Optimizer+Clone>
     samples:usize, //number of mirror-samples per step to approximate the gradient
 }
 
+impl<Feval:Evaluator+Clone> ES<Feval, SGD>
+{
+    /// Shortcut for ES::new(...) using SGD
+    /// Create a new ES-Optimizer using SGA (create SGD object with the given parameters)
+    pub fn new_with_sgd(evaluator:Feval, learning_rate:f64, beta:f64, lambda:f64) -> ES<Feval, SGD>
+    {
+        let mut optimizer = SGD::new();
+        optimizer.set_lr(learning_rate)
+            .set_beta(beta)
+            .set_lambda(lambda);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
 impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
 {
     /// Create a new ES-Optimizer
-    /// params = set of parameters to optimize
-    /// evaluator = function that computes the objetive-score based on the paramters
-    /// default optimizer is SGD (which is actually SGA = stochastic gradient ascent)
+    /// evaluator = object with Evaluator trait that computes the objetive-score based on the paramters
+    /// optimizer = optimizer to calculate the parameter update using the gradient and the current parameters. (e.g. use SGD::new() aka SGA)
+    /// Important: set the initial parameters afterswards by calling set_params to specify the problem dimension. (Default is [0.0], dim=1)
     pub fn new(optimizer:Opt, evaluator:Feval) -> ES<Feval, Opt>
     {
-        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.05, samples: 500 }
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Set the parameters (potentially reinitializing the process)
+    /// params = set of parameters to optimize
+    pub fn set_params(&mut self, params:Vec<f64>) -> &mut Self
+    {
+        self.params = params;
+        self.dim = self.params.len();
+        
+        self
     }
     
     /// Change the optimizer
     pub fn set_opt(&mut self, optimizer:Opt) -> &mut Self
     {
         self.opt = optimizer;
-        
-        self
-    }
-    
-    /// Set the parameters (potentially reinitializing the process)
-    pub fn set_params(&mut self, params:Vec<f64>) -> &mut Self
-    {
-        self.params = params;
-        self.dim = self.params.len();
         
         self
     }
@@ -163,7 +178,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
     }
     
     /// Set noise's standard deviation (applied to the parameters)
-    /// Humanoid example in the paper used 0.02 as an example.
+    /// Humanoid example in the paper used 0.02 as an example (default).
     /// Probably best to choose in dependence of evaluator output size.
     /// Tweak learning rate to fit to the std.
     pub fn set_std(&mut self, noise:f64) -> &mut Self

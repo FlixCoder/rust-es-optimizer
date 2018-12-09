@@ -31,13 +31,11 @@ fn main()
         .set_lambda(0.01); //weight decay coefficient. we use our additional, own regularizer in the loss/objective function
     
     let eval = PolynomeEval::new(points); //target
-    let params = gen_rnd_vec(DEGREE+1, 0.1); //generate random initial parameters
     
     //create ES-Optimizer
     let mut es = ES::new(opt, eval); //Evolution-Strategy-Optimizer using optimizer and evaluator
-    es.set_params(params) //initial parameters (important to specify the problem dimension, default is vec![0.0])
-        .set_std(0.02) //parameter noise standard deviation to approximate the gradient
-        .set_samples(500); //number of mirrored samples to use to approximate the gradient
+    let params = gen_rnd_vec(DEGREE+1, 0.1); //generate random initial parameters
+    es.set_params(params); //initial parameters (important to specify the problem dimension, default is vec![0.0])
     
     //track the optimizer's results
     for i in 0..5

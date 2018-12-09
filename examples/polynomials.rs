@@ -23,16 +23,11 @@ fn main()
                     ];*/
     
     //initialize required objects
-    let mut opt = SGD::new(); //SGA optimizer (named SGD)
-    opt.set_lr(0.5) //learning rate
-        .set_beta(0.1) //momentum factor
-        .set_lambda(0.0); //weight decay coefficient. we use our additional, own regularizer in the loss/objective function
-    
     let eval = PolynomeEval::new(points); //target
     let params = gen_rnd_vec(DEGREE+1, 0.1); //generate random initial parameters
     
     //create ES-Optimizer
-    let mut es = ES::new(opt, eval); //Evolution-Strategy-Optimizer using optimizer and evaluator
+    let mut es = ES::new_with_sgd(eval, 0.5, 0.1, 0.0); //Evolution-Strategy-Optimizer using optimizer and evaluator
     es.set_params(params) //initial parameters (important to specify the problem dimension, default is vec![0.0])
         .set_std(0.02) //parameter noise standard deviation to approximate the gradient
         .set_samples(50); //number of mirrored samples to use to approximate the gradient

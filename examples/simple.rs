@@ -5,16 +5,11 @@ use esopt::*;
 
 fn main()
 {
-    //initialize required objects
-    let mut opt = SGD::new(); //SGA optimizer (named SGD)
-    opt.set_lr(0.75) //learning rate
-        .set_beta(0.0) //momentum factor
-        .set_lambda(0.0); //weight decay coefficient
+    //create required evaluator
+    let eval = ExampleEval { target: 25.0 };
     
-    let eval = ExampleEval::new(25.0); //target = 25
-    
-    //create ES-Optimizer
-    let mut es = ES::new(opt, eval); //Evolution-Strategy-Optimizer using optimizer and evaluator
+    //create Evolution-Strategy-Optimizer
+    let mut es = ES::new_with_sgd(eval, 0.75, 0.0, 0.0); //using evaluator, lr, beta(momentum), lambda(weight decay)
     es.set_params(vec![0.0]) //initial parameters (important to specify the problem dimension, default is vec![0.0])
         .set_std(50.0) //parameter noise standard deviation to approximate the gradient
         .set_samples(50); //number of mirrored samples to use to approximate the gradient
@@ -35,14 +30,6 @@ fn main()
 struct ExampleEval
 {
     target:f64,
-}
-
-impl ExampleEval
-{
-    fn new(target:f64) -> ExampleEval
-    {
-        ExampleEval { target: target }
-    }
 }
 
 //implement Evaluator trait to allow usage in the optimizer
