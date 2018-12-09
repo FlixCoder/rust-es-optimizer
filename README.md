@@ -1,6 +1,9 @@
 # ES-Pptimizer [esopt]
 General Evolution-Strategy-Optimizer implementation according to https://arxiv.org/abs/1703.03864 in Rust.
 
+#Usage
+There are examples in the examples folder and below is the simplest one:
+
 Simple example (see examples/simple.rs):
 ```rust
 extern crate esopt;
