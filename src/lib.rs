@@ -8,7 +8,6 @@ use rayon::prelude::*;
 
 //TODO:
 //add Adam optimizer?
-//make parallel
 //adapt std to parameter/gradient values (std ~ param std)?
 //adapt lr to gradient/parameter sizes?
 
@@ -197,10 +196,34 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
         &self.params
     }
     
-    /// Get the optimizer (as ref, to change parameters)
+    /// Get the optimizer (as ref)
     pub fn get_opt(&self) -> &Opt
     {
         &self.opt
+    }
+    
+    /// Get the evaluator (as ref)
+    pub fn get_eval(&self) -> &Feval
+    {
+        &self.eval
+    }
+    
+    /// Get the current parameters (as mut)
+    pub fn get_params_mut(&mut self) -> &mut Vec<f64>
+    {
+        &mut self.params
+    }
+    
+    /// Get the optimizer (as mut, to change parameters)
+    pub fn get_opt_mut(&mut self) -> &mut Opt
+    {
+        &mut self.opt
+    }
+    
+    /// Get the evaluator (as mut, to change parameters)
+    pub fn get_eval_mut(&mut self) -> &mut Feval
+    {
+        &mut self.eval
     }
     
     /// Optimize for n steps
