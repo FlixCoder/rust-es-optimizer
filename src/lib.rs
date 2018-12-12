@@ -7,7 +7,6 @@ use rand::distributions::{Normal, Distribution};
 use rayon::prelude::*;
 
 //TODO:
-//add Adam optimizer?
 
 
 /// Definition of evaluator traits
@@ -92,21 +91,120 @@ impl Optimizer for SGD
             self.lastv = vec![0.0; params.len()];
         }
         
-        //momentum SGD update
-        mul_scalar(&mut self.lastv, self.beta);
-        let mut gradcopy = grad.clone();
-        mul_scalar(&mut gradcopy, 1.0 - self.beta);
-        add_inplace(&mut self.lastv, &gradcopy);
-        gradcopy = self.lastv.clone();
-        mul_scalar(&mut gradcopy, self.lr);
-        
-        //weight decay
-        let mut wdecay = params.clone();
-        mul_scalar(&mut wdecay, -self.lr * self.lambda);
-        add_inplace(&mut gradcopy, &wdecay);
+        //calculate momentum update and compute delta (parameter update)
+        let mut delta = grad.clone();
+        for ((m, d), p) in self.lastv.iter_mut().zip(delta.iter_mut()).zip(params.iter())
+        {
+            //momentum update
+            *m = self.beta * *m + (1.0 - self.beta) * *d;
+            //compute delta based on momentum
+            *d = self.lr * *m; //here no minus, because ascend instead of descent
+            //add weight decay
+            *d -= self.lr * self.lambda * *p;
+        }
         
         //return
-        gradcopy
+        delta
+    }
+}
+
+/// Adam Optimizer
+#[derive(Debug, Clone)]
+pub struct Adam
+{
+    lr:f64, //learning rate
+    beta1:f64, //exponential moving average factor
+    beta2:f64, //exponential second moment average factor (squared gradient)
+    eps:f64, //small epsilon to avoid divide by zero (fuzz factor)
+    t:usize, //number of taken timesteps
+    avggrad1:Vec<f64>, //first order moment (avg)
+    avggrad2:Vec<f64>, //second oder moment (squared)
+}
+
+impl Adam
+{
+    /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
+    pub fn new() -> Adam
+    {
+        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0] }
+    }
+    
+    pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
+    {
+        if learning_rate <= 0.0
+        {
+            panic!("Learning rate must be greater than zero!");
+        }
+        self.lr = learning_rate;
+        
+        self
+    }
+    
+    /// Set beta1 coefficient (for exponential moving average of first moment)
+    pub fn set_beta1(&mut self, beta:f64) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta1 = beta;
+        
+        self
+    }
+    
+    /// Set beta2 coefficient (for exponential moving average of second moment)
+    pub fn set_beta2(&mut self, beta:f64) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta2 = beta;
+        
+        self
+    }
+    
+    /// Set epsilon to avoid divide by zero (fuzz factor)
+    pub fn set_eps(&mut self, epsilon:f64) -> &mut Self
+    {
+        if epsilon < 0.0
+        {
+            panic!("Epsilon must be >= 0!");
+        }
+        self.eps = epsilon;
+        
+        self
+    }
+}
+
+impl Optimizer for Adam
+{
+    /// Compute delta update from params and gradient
+    fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
+    {
+        if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
+        { //initialize with zero moments
+            self.avggrad1 = vec![0.0; params.len()];
+            self.avggrad2 = vec![0.0; params.len()];
+        }
+        
+        //timestep + unbias factor
+        self.t += 1;
+        let lr_unbias = self.lr * (1.0 - self.beta2.powf(self.t as f64)).sqrt() / (1.0 - self.beta1.powf(self.t as f64));
+        
+        //update exponential moving averages and compute delta (parameter update)
+        let mut delta = grad.clone();
+        for ((g1, g2), d) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut())
+        {
+            //moment 1 and 2 update
+            *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
+            *g2 = self.beta2 * *g2 + (1.0 - self.beta2) * *d * *d;
+            //delta update
+            *d = lr_unbias * *g1 / (g2.sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
+        }
+        
+        //return
+        delta
     }
 }
 
@@ -126,14 +224,39 @@ pub struct ES<Feval:Evaluator+Clone, Opt:Optimizer+Clone>
 
 impl<Feval:Evaluator+Clone> ES<Feval, SGD>
 {
-    /// Shortcut for ES::new(...) using SGD
-    /// Create a new ES-Optimizer using SGA (create SGD object with the given parameters)
+    /// Shortcut for ES::new(...) using SGD:
+    /// Create a new ES-Optimizer using SGA (create SGD object with the given parameters).
     pub fn new_with_sgd(evaluator:Feval, learning_rate:f64, beta:f64, lambda:f64) -> ES<Feval, SGD>
     {
         let mut optimizer = SGD::new();
         optimizer.set_lr(learning_rate)
             .set_beta(beta)
             .set_lambda(lambda);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator+Clone> ES<Feval, Adam>
+{
+    /// Shortcut for ES::new(...) using Adam:
+    /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt().set_<...>(...).
+    pub fn new_with_adam(evaluator:Feval, learning_rate:f64) -> ES<Feval, Adam>
+    {
+        let mut optimizer = Adam::new();
+        optimizer.set_lr(learning_rate);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using Adam:
+    /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
+    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, beta1:f64, beta2:f64, eps:f64) -> ES<Feval, Adam>
+    {
+        let mut optimizer = Adam::new();
+        optimizer.set_lr(learning_rate)
+            .set_beta1(beta1)
+            .set_beta2(beta2)
+            .set_eps(eps);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
 }
@@ -251,20 +374,26 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             grad = vec![0.0; self.dim];
             for _ in 0..self.samples
             {
-                let mut testparampos = gen_rnd_vec(self.dim, self.std);
-                let mut epspos = testparampos.clone();
-                let mut testparamneg = testparampos.clone();
-                mul_scalar(&mut testparamneg, -1.0);
-                let mut epsneg = testparamneg.clone();
-                add_inplace(&mut testparampos, &self.params);
-                add_inplace(&mut testparamneg, &self.params);
-                let score = self.eval.eval(&testparampos);
-                mul_scalar(&mut epspos, score);
-                add_inplace(&mut grad, &epspos);
-                let score = self.eval.eval(&testparamneg);
-                mul_scalar(&mut epsneg, score);
-                add_inplace(&mut grad, &epsneg);
+                //generate epsilon
+                let eps = gen_rnd_vec(self.dim, self.std);
+                //compute test parameters in both directions
+                let mut testparampos = eps.clone();
+                let mut testparamneg = eps.clone();
+                for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
+                {
+                    *pos = *p + *pos;
+                    *neg = *p - *neg;
+                }
+                //evaluate test parameters
+                let scorepos = self.eval.eval(&testparampos);
+                let scoreneg = self.eval.eval(&testparamneg);
+                //calculate grad sum update
+                for (g, e) in grad.iter_mut().zip(eps.iter())
+                {
+                    *g += *e * scorepos - *e * scoreneg;
+                }
             }
+            //calculate gradient from the sum
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
@@ -332,11 +461,6 @@ pub fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
 /// Add a second vector onto the first vector in place
 fn add_inplace(v1:&mut Vec<f64>, v2:&Vec<f64>)
 {
-    if v1.len() != v2.len()
-    {
-        panic!("Vectors are not equally sized!");
-    }
-    
     for (val1, val2) in v1.iter_mut().zip(v2.iter())
     {
         *val1 += *val2;
