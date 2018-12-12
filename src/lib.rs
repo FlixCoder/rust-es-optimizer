@@ -129,7 +129,7 @@ impl Adam
     /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
     pub fn new() -> Adam
     {
-        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: true }
+        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
     }
     
     pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
@@ -203,7 +203,10 @@ impl Optimizer for Adam
         { //initialize with zero moments
             self.avggrad1 = vec![0.0; params.len()];
             self.avggrad2 = vec![0.0; params.len()];
-            self.grad2max = vec![0.0; params.len()];
+            if self.amsgrad
+            {
+                self.grad2max = vec![0.0; params.len()];
+            }
         }
         
         //timestep + unbias factor
@@ -212,17 +215,16 @@ impl Optimizer for Adam
         
         //update exponential moving averages and compute delta (parameter update)
         let mut delta = grad.clone();
-        for (((g1, g2), ams), d) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(self.grad2max.iter_mut()).zip(delta.iter_mut())
+        for (i, ((g1, g2), d)) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).enumerate()
         {
             //moment 1 and 2 update
             *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
             *g2 = self.beta2 * *g2 + (1.0 - self.beta2) * *d * *d;
-            //amsgrad update
-            *ams = ams.max(*g2);
             //delta update
             if self.amsgrad
             {
-                *d = lr_unbias * *g1 / (ams.sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
+                self.grad2max[i] = self.grad2max[i].max(*g2); //amsgrad update
+                *d = lr_unbias * *g1 / (self.grad2max[i].sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
             }
             else
             {
