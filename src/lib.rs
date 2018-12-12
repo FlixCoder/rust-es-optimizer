@@ -8,8 +8,6 @@ use rayon::prelude::*;
 
 //TODO:
 //add Adam optimizer?
-//adapt std to parameter/gradient values (std ~ param std)?
-//adapt lr to gradient/parameter sizes?
 
 
 /// Definition of evaluator traits
