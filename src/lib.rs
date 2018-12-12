@@ -7,6 +7,7 @@ use rand::distributions::{Normal, Distribution};
 use rayon::prelude::*;
 
 //TODO:
+//add Adamax
 
 
 /// Definition of evaluator traits
@@ -128,7 +129,7 @@ impl Adam
     /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
     pub fn new() -> Adam
     {
-        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
+        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: true }
     }
     
     pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
@@ -184,6 +185,12 @@ impl Adam
         self.amsgrad = amsgrad;
         
         self
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    pub fn get_t(&self) -> usize
+    {
+        self.t
     }
 }
 
