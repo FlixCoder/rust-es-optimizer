@@ -114,6 +114,7 @@ impl Optimizer for SGD
 pub struct Adam
 {
     lr:f64, //learning rate
+    lambda:f64, //weight decay coefficient
     beta1:f64, //exponential moving average factor
     beta2:f64, //exponential second moment average factor (squared gradient)
     eps:f64, //small epsilon to avoid divide by zero (fuzz factor)
@@ -129,7 +130,7 @@ impl Adam
     /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
     pub fn new() -> Adam
     {
-        Adam { lr: 0.01, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
+        Adam { lr: 0.01, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
     }
     
     pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
@@ -139,6 +140,18 @@ impl Adam
             panic!("Learning rate must be greater than zero!");
         }
         self.lr = learning_rate;
+        
+        self
+    }
+    
+    /// Set lambda factor for weight decay
+    pub fn set_lambda(&mut self, coeff:f64) -> &mut Self
+    {
+        if coeff < 0.0
+        {
+            panic!("Lambda coefficient may not be smaller than zero!");
+        }
+        self.lambda = coeff;
         
         self
     }
@@ -215,7 +228,7 @@ impl Optimizer for Adam
         
         //update exponential moving averages and compute delta (parameter update)
         let mut delta = grad.clone();
-        for (i, ((g1, g2), d)) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).enumerate()
+        for (i, (((g1, g2), d), p)) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter()).enumerate()
         {
             //moment 1 and 2 update
             *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
@@ -230,6 +243,8 @@ impl Optimizer for Adam
             {
                 *d = lr_unbias * *g1 / (g2.sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
             }
+            //weight decay
+            *d -= self.lr * self.lambda * *p;
         }
         
         //return
@@ -270,19 +285,21 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adam>
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
     /// Change these paramters using method get_opt().set_<...>(...).
-    pub fn new_with_adam(evaluator:Feval, learning_rate:f64) -> ES<Feval, Adam>
+    pub fn new_with_adam(evaluator:Feval, learning_rate:f64, lambda:f64) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
-        optimizer.set_lr(learning_rate);
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
     
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
-    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, beta1:f64, beta2:f64, eps:f64, amsgrad:bool) -> ES<Feval, Adam>
+    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64, amsgrad:bool) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
         optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
             .set_beta1(beta1)
             .set_beta2(beta2)
             .set_eps(eps)
