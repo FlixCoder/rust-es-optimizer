@@ -7,7 +7,6 @@ use rand::distributions::{Normal, Distribution};
 use rayon::prelude::*;
 
 //TODO:
-//add Adamax
 
 
 /// Definition of evaluator traits
@@ -127,10 +126,11 @@ pub struct Adam
 
 impl Adam
 {
-    /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
+    /// Create new Adam optimizer instance using default hyperparameters (lr = 0.001, lambda = 0, beta1 = 0.9, beta2 = 0.999, eps = 1e-8, amsgrad = false)
+    /// Also try higher LR; beta2 = 0.99
     pub fn new() -> Adam
     {
-        Adam { lr: 0.01, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps:1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
+        Adam { lr: 0.001, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
     }
     
     pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
@@ -243,6 +243,128 @@ impl Optimizer for Adam
             {
                 *d = lr_unbias * *g1 / (g2.sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
             }
+            //weight decay
+            *d -= self.lr * self.lambda * *p;
+        }
+        
+        //return
+        delta
+    }
+}
+
+/// Adam Optimizer
+#[derive(Debug, Clone)]
+pub struct Adamax
+{
+    lr:f64, //learning rate
+    lambda:f64, //weight decay coefficient
+    beta1:f64, //exponential moving average factor
+    beta2:f64, //exponential second moment average factor (squared gradient)
+    eps:f64, //small epsilon to avoid divide by zero (fuzz factor)
+    t:usize, //number of taken timesteps
+    avggrad1:Vec<f64>, //first order moment (avg)
+    avggrad2:Vec<f64>, //second oder moment (squared)
+}
+
+impl Adamax
+{
+    /// Create new Adamax optimizer instance using default hyperparameters (lr = 0.002, lambda = 0, beta1 = 0.9, beta2 = 0.999, eps = 0)
+    /// Also try higher LR; beta2 = 0.99
+    pub fn new() -> Adamax
+    {
+        Adamax { lr: 0.002, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 0.0, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0] }
+    }
+    
+    pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
+    {
+        if learning_rate <= 0.0
+        {
+            panic!("Learning rate must be greater than zero!");
+        }
+        self.lr = learning_rate;
+        
+        self
+    }
+    
+    /// Set lambda factor for weight decay
+    pub fn set_lambda(&mut self, coeff:f64) -> &mut Self
+    {
+        if coeff < 0.0
+        {
+            panic!("Lambda coefficient may not be smaller than zero!");
+        }
+        self.lambda = coeff;
+        
+        self
+    }
+    
+    /// Set beta1 coefficient (for exponential moving average of first moment)
+    pub fn set_beta1(&mut self, beta:f64) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta1 = beta;
+        
+        self
+    }
+    
+    /// Set beta2 coefficient (for exponential moving average of second moment)
+    pub fn set_beta2(&mut self, beta:f64) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta2 = beta;
+        
+        self
+    }
+    
+    /// Set epsilon to avoid divide by zero (fuzz factor)
+    pub fn set_eps(&mut self, epsilon:f64) -> &mut Self
+    {
+        if epsilon < 0.0
+        {
+            panic!("Epsilon must be >= 0!");
+        }
+        self.eps = epsilon;
+        
+        self
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    pub fn get_t(&self) -> usize
+    {
+        self.t
+    }
+}
+
+impl Optimizer for Adamax
+{
+    /// Compute delta update from params and gradient
+    fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
+    {
+        if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
+        { //initialize with zero moments
+            self.avggrad1 = vec![0.0; params.len()];
+            self.avggrad2 = vec![0.0; params.len()];
+        }
+        
+        //timestep + unbias factor
+        self.t += 1;
+        let lr_unbias = self.lr / (1.0 - self.beta1.powf(self.t as f64));
+        
+        //update exponential moving averages and compute delta (parameter update)
+        let mut delta = grad.clone();
+        for (((g1, g2), d), p) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter())
+        {
+            //moment 1 and 2 update
+            *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
+            *g2 = (self.beta2 * *g2).max(d.abs());
+            //delta update
+            *d = lr_unbias * *g1 / (*g2 + self.eps); //normally it would be -lr_unbias, but we want to maximize
             //weight decay
             *d -= self.lr * self.lambda * *p;
         }
