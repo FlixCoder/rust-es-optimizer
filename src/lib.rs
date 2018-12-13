@@ -406,7 +406,7 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adam>
 {
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
-    /// Change these paramters using method get_opt().set_<...>(...).
+    /// Change these paramters using method get_opt_mut().set_<...>(...).
     pub fn new_with_adam(evaluator:Feval, learning_rate:f64, lambda:f64) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
@@ -426,6 +426,33 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adam>
             .set_beta2(beta2)
             .set_eps(eps)
             .set_amsgrad(amsgrad);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator+Clone> ES<Feval, Adamax>
+{
+    /// Shortcut for ES::new(...) using Adamax:
+    /// Create a new ES-Optimizer using Adamax (create Adam object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt_mut().set_<...>(...).
+    pub fn new_with_adamax(evaluator:Feval, learning_rate:f64, lambda:f64) -> ES<Feval, Adamax>
+    {
+        let mut optimizer = Adamax::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using Adam:
+    /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
+    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64) -> ES<Feval, Adamax>
+    {
+        let mut optimizer = Adamax::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
+            .set_beta1(beta1)
+            .set_beta2(beta2)
+            .set_eps(eps);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
 }
