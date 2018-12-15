@@ -3,6 +3,7 @@
 extern crate rand;
 extern crate rayon;
 
+use std::cmp::Ordering;
 use rand::distributions::{Normal, Distribution};
 use rayon::prelude::*;
 
@@ -558,7 +559,8 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
         &mut self.eval
     }
     
-    /// Optimize for n steps
+    /// Optimize for n steps.
+    /// Uses the evaluator's score to calculate the gradients.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize(&mut self, n:usize) -> (f64, f64)
     {
@@ -570,7 +572,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             grad = vec![0.0; self.dim];
             for _ in 0..self.samples
             {
-                //generate epsilon
+                //generate random epsilon
                 let eps = gen_rnd_vec(self.dim, self.std);
                 //compute test parameters in both directions
                 let mut testparampos = eps.clone();
@@ -600,8 +602,60 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
         (self.eval.eval(&self.params), norm(&grad))
     }
     
-    /// Optimize for n steps (evaluation in parallel)
-    /// Optimizer and Evaluator must satisfy the Sync trait
+    /// Optimize for n steps.
+    /// Uses the centered ranks to calculate the gradients.
+    /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
+    pub fn optimize_ranked(&mut self, n:usize) -> (f64, f64)
+    {
+        let mut grad = vec![0.0; self.dim];
+        //for n iterations:
+        for _i in 0..n
+        {
+            //approximate gradient with self.samples double-sided samples
+            let mut results = Vec::new();
+            for _ in 0..self.samples
+            {
+                //generate random epsilon
+                let eps = gen_rnd_vec(self.dim, self.std);
+                let mut negeps = eps.clone();
+                mul_scalar(&mut negeps, -1.0);
+                //compute test parameters in both directions
+                let mut testparampos = eps.clone();
+                let mut testparamneg = eps.clone();
+                for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
+                {
+                    *pos = *p + *pos;
+                    *neg = *p - *neg;
+                }
+                //evaluate test parameters
+                let scorepos = self.eval.eval(&testparampos);
+                let scoreneg = self.eval.eval(&testparamneg);
+                //save results
+                results.push((eps, scorepos));
+                results.push((negeps, scoreneg));
+            }
+            //sort, create ranks, sum up and calculate gradient from the sum
+            sort_scores(&mut results);
+            grad = vec![0.0; self.dim];
+            for (rank, (eps, _score)) in results.iter_mut().enumerate()
+            {
+                let centered_rank = rank as f64 / (2 * self.samples - 1) as f64 - 0.5;
+                mul_scalar(eps, centered_rank);
+                add_inplace(&mut grad, eps);
+            }
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            //calculate the delta update using the optimizer
+            let delta = self.opt.get_delta(&self.params, &grad);
+            //update the parameters
+            add_inplace(&mut self.params, &delta);
+        }
+        
+        (self.eval.eval(&self.params), norm(&grad))
+    }
+    
+    /// Optimize for n steps (evaluation in parallel).
+    /// Uses the evaluator's score to calculate the gradients.
+    /// Optimizer and Evaluator must satisfy the Sync trait.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize_par(&mut self, n:usize) -> (f64, f64)
         where Opt:Sync, Feval:Sync
@@ -634,6 +688,52 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             {
                 let res = epsvec.pop().expect("Epsvec.is_empty did not work!");
                 add_inplace(&mut grad, &res);
+            }
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            //calculate the delta update using the optimizer
+            let delta = self.opt.get_delta(&self.params, &grad);
+            //update the parameters
+            add_inplace(&mut self.params, &delta);
+        }
+        
+        (self.eval.eval(&self.params), norm(&grad))
+    }
+    
+    /// Optimize for n steps (evaluation in parallel).
+    /// Uses the centered ranks to calculate the gradients.
+    /// Optimizer and Evaluator must satisfy the Sync trait.
+    /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
+    pub fn optimize_ranked_par(&mut self, n:usize) -> (f64, f64)
+        where Opt:Sync, Feval:Sync
+    {
+        let mut grad = vec![0.0; self.dim];
+        //for n iterations:
+        for _i in 0..n
+        {
+            //approximate gradient with self.samples double-sided samples
+            //first generate a set of random eps vectors
+            let mut epsvec = Vec::new();
+            for _ in 0..self.samples
+            {
+                let mut eps = gen_rnd_vec(self.dim, self.std);
+                epsvec.push(eps.clone());
+                mul_scalar(&mut eps, -1.0);
+                epsvec.push(eps);
+            }
+            //then evaluate them in parallel and sort them
+            let mut scores = epsvec.par_iter().map(|eps| -> f64
+                {
+                    let mut testparam = eps.clone();
+                    add_inplace(&mut testparam, &self.params);
+                    self.eval.eval(&testparam)
+                }).enumerate().collect();
+            sort_scores(&mut scores);
+            //compute the centered ranks and calculate the summed result to compute the gradient
+            for (rank, (index, _score)) in scores.iter().enumerate()
+            {
+                let centered_rank = rank as f64 / (epsvec.len() - 1) as f64 - 0.5;
+                mul_scalar(&mut epsvec[*index], centered_rank);
+                add_inplace(&mut grad, &epsvec[*index]);
             }
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
@@ -681,4 +781,20 @@ fn norm(vec:&Vec<f64>) -> f64
         norm += *val * *val;
     }
     norm.sqrt()
+}
+
+/// Sorts the internal score-vector, so that ranks can be computed
+fn sort_scores<T>(vec:&mut Vec<(T, f64)>)
+{ //worst score in front
+    vec.sort_unstable_by(|ref r1, ref r2| { //partial cmp and check for NaN
+            let r = (r1.1).partial_cmp(&r2.1);
+            if r.is_some()
+            {
+                r.unwrap()
+            }
+            else
+            {
+                if r1.1.is_nan() { if r2.1.is_nan() { Ordering::Equal } else { Ordering::Less } } else { Ordering::Greater }
+            }
+        });
 }

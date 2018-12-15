@@ -29,7 +29,7 @@ fn main()
     //create ES-Optimizer
     let mut es = ES::new_with_sgd(eval, 0.5, 0.1, 0.0); //Evolution-Strategy-Optimizer using optimizer and evaluator
     es.set_params(params) //initial parameters (important to specify the problem dimension, default is vec![0.0])
-        .set_std(0.02) //parameter noise standard deviation to approximate the gradient
+        .set_std(0.05) //parameter noise standard deviation to approximate the gradient
         .set_samples(50); //number of mirrored samples to use to approximate the gradient
     
     //track the optimizer's results
