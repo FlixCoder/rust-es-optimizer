@@ -51,7 +51,7 @@ fn main()
 }
 
 
-fn calc_f(factors:&Vec<f64>, x:f64) -> f64
+fn calc_f(factors:&[f64], x:f64) -> f64
 {
     let mut result = factors[0];
     let mut current_pow = 1.0;
@@ -63,7 +63,7 @@ fn calc_f(factors:&Vec<f64>, x:f64) -> f64
     result
 }
 
-fn print_f(fct:&Vec<f64>)
+fn print_f(fct:&[f64])
 {
     let mut str = String::new();
     for i in 0..fct.len()
@@ -93,7 +93,7 @@ impl PolynomeEval
 impl Evaluator for PolynomeEval
 {
     //evaluate as inverted mean absolute error to target (we want to minimize instead of maximize)
-    fn eval(&self, params:&Vec<f64>) -> f64
+    fn eval(&self, params:&[f64]) -> f64
     {
         let mut rng = rand::thread_rng();
         //calculate mean absolute error of random batch of points -> seems to accept outliers

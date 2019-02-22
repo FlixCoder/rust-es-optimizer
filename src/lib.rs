@@ -15,7 +15,7 @@ pub trait Evaluator
 {
     /// Function to evaluate a set of parameters given as parameter
     /// Return the score towards the target (optimizer maximizes)
-    fn eval(&self, &Vec<f64>) -> f64;
+    fn eval(&self, &[f64]) -> f64;
 }
 
 /// Definition of the optimizer traits, to dynamically allow different optimizers
@@ -24,7 +24,7 @@ pub trait Optimizer
     /// Function to compute the delta step/update later applied to the parameters
     /// Takes parameters and gradient as input
     /// Returns delta vector
-    fn get_delta(&mut self, &Vec<f64>, &Vec<f64>) -> Vec<f64>;
+    fn get_delta(&mut self, &[f64], &[f64]) -> Vec<f64>;
 }
 
 /// SGD Optimizer, which actually is SGA here (stochastic gradient ascent)
@@ -85,7 +85,7 @@ impl SGD
 impl Optimizer for SGD
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
+    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
     {
         if self.lastv.len() != params.len()
         { //initialize with zero gradient
@@ -93,7 +93,7 @@ impl Optimizer for SGD
         }
         
         //calculate momentum update and compute delta (parameter update)
-        let mut delta = grad.clone();
+        let mut delta = grad.to_vec();
         for ((m, d), p) in self.lastv.iter_mut().zip(delta.iter_mut()).zip(params.iter())
         {
             //momentum update
@@ -211,7 +211,7 @@ impl Adam
 impl Optimizer for Adam
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
+    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
     {
         if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
         { //initialize with zero moments
@@ -228,7 +228,7 @@ impl Optimizer for Adam
         let lr_unbias = self.lr * (1.0 - self.beta2.powf(self.t as f64)).sqrt() / (1.0 - self.beta1.powf(self.t as f64));
         
         //update exponential moving averages and compute delta (parameter update)
-        let mut delta = grad.clone();
+        let mut delta = grad.to_vec();
         for (i, (((g1, g2), d), p)) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter()).enumerate()
         {
             //moment 1 and 2 update
@@ -345,7 +345,7 @@ impl Adamax
 impl Optimizer for Adamax
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&Vec<f64>, grad:&Vec<f64>) -> Vec<f64>
+    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
     {
         if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
         { //initialize with zero moments
@@ -358,7 +358,7 @@ impl Optimizer for Adamax
         let lr_unbias = self.lr / (1.0 - self.beta1.powf(self.t as f64));
         
         //update exponential moving averages and compute delta (parameter update)
-        let mut delta = grad.clone();
+        let mut delta = grad.to_vec();
         for (((g1, g2), d), p) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter())
         {
             //moment 1 and 2 update
@@ -446,7 +446,7 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adamax>
     
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
-    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64) -> ES<Feval, Adamax>
+    pub fn new_with_adamax_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64) -> ES<Feval, Adamax>
     {
         let mut optimizer = Adamax::new();
         optimizer.set_lr(learning_rate)
@@ -755,7 +755,7 @@ pub fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
 }
 
 /// Add a second vector onto the first vector in place
-fn add_inplace(v1:&mut Vec<f64>, v2:&Vec<f64>)
+fn add_inplace(v1:&mut [f64], v2:&[f64])
 {
     for (val1, val2) in v1.iter_mut().zip(v2.iter())
     {
@@ -764,7 +764,7 @@ fn add_inplace(v1:&mut Vec<f64>, v2:&Vec<f64>)
 }
 
 /// Multiplies a scalar to a vector
-fn mul_scalar(vec:&mut Vec<f64>, scalar:f64)
+fn mul_scalar(vec:&mut [f64], scalar:f64)
 {
     for val in vec.iter_mut()
     {
@@ -773,7 +773,7 @@ fn mul_scalar(vec:&mut Vec<f64>, scalar:f64)
 }
 
 /// Calculates the norm of a vector
-fn norm(vec:&Vec<f64>) -> f64
+fn norm(vec:&[f64]) -> f64
 {
     let mut norm = 0.0;
     for val in vec.iter()
