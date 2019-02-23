@@ -5,6 +5,7 @@ extern crate rayon;
 
 use std::cmp::Ordering;
 use rand::distributions::{Normal, Distribution};
+use rand::prelude::*;
 use rayon::prelude::*;
 
 //TODO:
@@ -607,42 +608,46 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize_ranked(&mut self, n:usize) -> (f64, f64)
     {
+        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
+        
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
-            let mut results = Vec::new();
-            for _ in 0..self.samples
+            //first generate and fill whole vector of scores
+            let mut scores = Vec::new();
+            for i in 0..self.samples
             {
-                //generate random epsilon
-                let eps = gen_rnd_vec(self.dim, self.std);
-                let mut negeps = eps.clone();
-                mul_scalar(&mut negeps, -1.0);
-                //compute test parameters in both directions
-                let mut testparampos = eps.clone();
-                let mut testparamneg = eps.clone();
+                //repeatable eps generation to save memory
+                let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                //gen and compute test parameters
+                let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
+                let mut testparamneg = testparampos.clone();
                 for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
                 {
                     *pos = *p + *pos;
                     *neg = *p - *neg;
                 }
-                //evaluate test parameters
+                //evaluate parameters and save scores
                 let scorepos = self.eval.eval(&testparampos);
                 let scoreneg = self.eval.eval(&testparamneg);
-                //save results
-                results.push((eps, scorepos));
-                results.push((negeps, scoreneg));
+                scores.push((i, false, scorepos));
+                scores.push((i, true, scoreneg));
             }
             //sort, create ranks, sum up and calculate gradient from the sum
-            sort_scores(&mut results);
-            grad = vec![0.0; self.dim];
-            for (rank, (eps, _score)) in results.iter_mut().enumerate()
-            {
-                let centered_rank = rank as f64 / (2 * self.samples - 1) as f64 - 0.5;
-                mul_scalar(eps, centered_rank);
-                add_inplace(&mut grad, eps);
-            }
+            sort_scores(&mut scores);
+            scores.iter().enumerate().for_each(|(rank, (i, neg, _score))|
+                {
+                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
+                    let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    let negfactor = if *neg { -1.0 } else { 1.0 };
+                    let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
+                    for (g, e) in grad.iter_mut().zip(eps.iter())
+                    {
+                        *g += *e * negfactor * centered_rank;
+                    }
+                });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
@@ -660,35 +665,41 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
     pub fn optimize_par(&mut self, n:usize) -> (f64, f64)
         where Opt:Sync, Feval:Sync
     {
+        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
+        
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
-            //first generate a set of eps vectors
-            let mut epsvec = Vec::new();
-            for _ in 0..self.samples
-            {
-                let mut eps = gen_rnd_vec(self.dim, self.std);
-                epsvec.push(eps.clone());
-                mul_scalar(&mut eps, -1.0);
-                epsvec.push(eps);
-            }
-            //then evaluate them in parallel
-            epsvec.par_iter_mut().for_each(|eps|
+            //first generate and fill whole vector of scores
+            let mut scores = vec![(0.0, 0.0); self.samples];
+            scores.par_iter_mut().enumerate().for_each(|(i, (scorepos, scoreneg))|
                 {
-                    let mut testparam = eps.clone();
-                    add_inplace(&mut testparam, &self.params);
-                    let score = self.eval.eval(&testparam);
-                    mul_scalar(eps, score);
+                    //repeatable eps generation to save memory
+                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                    //gen and compute test parameters
+                    let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
+                    let mut testparamneg = testparampos.clone();
+                    for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
+                    {
+                        *pos = *p + *pos;
+                        *neg = *p - *neg;
+                    }
+                    //evaluate parameters and save scores
+                    *scorepos = self.eval.eval(&testparampos);
+                    *scoreneg = self.eval.eval(&testparamneg);
                 });
-            //afterwards add up the results to compute the gradient
-            grad = epsvec.pop().expect("Number of sample was zero - impossible!");
-            while !epsvec.is_empty()
-            {
-                let res = epsvec.pop().expect("Epsvec.is_empty did not work!");
-                add_inplace(&mut grad, &res);
-            }
+            //then add up to compute the gradient sequentially (could only do parallel with mutex on grad)
+            scores.iter().enumerate().for_each(|(i, (scorepos, scoreneg))|
+                {
+                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                    let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    for (g, e) in grad.iter_mut().zip(eps.iter())
+                    {
+                        *g += *e * *scorepos - *e * *scoreneg;
+                    }
+                });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
@@ -706,35 +717,48 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
     pub fn optimize_ranked_par(&mut self, n:usize) -> (f64, f64)
         where Opt:Sync, Feval:Sync
     {
+        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
+        
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
-            //first generate a set of random eps vectors
-            let mut epsvec = Vec::new();
-            for _ in 0..self.samples
+            //first generate and fill whole vector of scores
+            let mut scores = vec![(0, false, 0.0); 2*self.samples];
+            for i in 0..self.samples
             {
-                let mut eps = gen_rnd_vec(self.dim, self.std);
-                epsvec.push(eps.clone());
-                mul_scalar(&mut eps, -1.0);
-                epsvec.push(eps);
+                scores[2*i].0 = i;
+                scores[2*i+1].0 = i;
+                scores[2*i+1].1 = true;
             }
-            //then evaluate them in parallel and sort them
-            let mut scores = epsvec.par_iter().map(|eps| -> f64
+            scores.par_iter_mut().for_each(|(i, neg, score)|
                 {
-                    let mut testparam = eps.clone();
+                    //repeatable eps generation to save memory
+                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
+                    //gen and compute test parameters
+                    let mut testparam = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
+                    if *neg
+                    {
+                        mul_scalar(&mut testparam, -1.0);
+                    }
                     add_inplace(&mut testparam, &self.params);
-                    self.eval.eval(&testparam)
-                }).enumerate().collect();
-            sort_scores(&mut scores);
+                    //evaluate parameters and save scores
+                    *score = self.eval.eval(&testparam);
+                });
             //compute the centered ranks and calculate the summed result to compute the gradient
-            for (rank, (index, _score)) in scores.iter().enumerate()
-            {
-                let centered_rank = rank as f64 / (epsvec.len() - 1) as f64 - 0.5;
-                mul_scalar(&mut epsvec[*index], centered_rank);
-                add_inplace(&mut grad, &epsvec[*index]);
-            }
+            sort_scores(&mut scores);
+            scores.iter().enumerate().for_each(|(rank, (i, neg, _score))|
+                {
+                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
+                    let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    let negfactor = if *neg { -1.0 } else { 1.0 };
+                    let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
+                    for (g, e) in grad.iter_mut().zip(eps.iter())
+                    {
+                        *g += *e * negfactor * centered_rank;
+                    }
+                });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
@@ -747,9 +771,18 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
 }
 
 /// Generate a vector of random numbers with 0 mean and std std, normally distributed.
+/// Using specified RNG.
+fn gen_rnd_vec_rng<RNG: Rng>(rng:&mut RNG, n:usize, std:f64) -> Vec<f64>
+{
+    let normal = Normal::new(0.0, std);
+    normal.sample_iter(rng).take(n).collect()
+}
+
+/// Generate a vector of random numbers with 0 mean and std std, normally distributed.
+/// Using standard thread_rng.
 pub fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
 {
-    let mut rng = rand::thread_rng();
+    let mut rng = thread_rng();
     let normal = Normal::new(0.0, std);
     normal.sample_iter(&mut rng).take(n).collect()
 }
@@ -784,17 +817,17 @@ fn norm(vec:&[f64]) -> f64
 }
 
 /// Sorts the internal score-vector, so that ranks can be computed
-fn sort_scores<T>(vec:&mut Vec<(T, f64)>)
+fn sort_scores<T,U>(vec:&mut Vec<(T, U, f64)>)
 { //worst score in front
     vec.sort_unstable_by(|ref r1, ref r2| { //partial cmp and check for NaN
-            let r = (r1.1).partial_cmp(&r2.1);
+            let r = (r1.2).partial_cmp(&r2.2);
             if r.is_some()
             {
                 r.unwrap()
             }
             else
             {
-                if r1.1.is_nan() { if r2.1.is_nan() { Ordering::Equal } else { Ordering::Less } } else { Ordering::Greater }
+                if r1.2.is_nan() { if r2.2.is_nan() { Ordering::Equal } else { Ordering::Less } } else { Ordering::Greater }
             }
         });
 }
