@@ -88,7 +88,7 @@ impl PolynomeEval
 impl Evaluator for PolynomeEval
 {
     //evaluate as inverted mean absolute error to target (we want to minimize instead of maximize)
-    fn eval(&self, params:&[f64]) -> f64
+    fn eval_test(&self, params:&[f64]) -> f64
     {
         //calculate mean absolute error
         let mut mae = 0.0;
@@ -109,5 +109,10 @@ impl Evaluator for PolynomeEval
         l1 *= REGULARIZE;
         //return
         -(mae + l1)
+    }
+    
+    fn eval_train(&self, params:&[f64], _:usize) -> f64
+    {
+        self.eval_test(params)
     }
 }

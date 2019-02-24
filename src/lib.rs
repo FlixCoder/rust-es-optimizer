@@ -11,12 +11,18 @@ use rayon::prelude::*;
 //TODO:
 
 
-/// Definition of evaluator traits
+/// Definition of standard evaluator trait.
 pub trait Evaluator
 {
-    /// Function to evaluate a set of parameters given as parameter
-    /// Return the score towards the target (optimizer maximizes)
-    fn eval(&self, &[f64]) -> f64;
+    /// Function to evaluate a set of parameters given as parameter.
+    /// Return the score towards the target (optimizer maximizes).
+    /// Only used once per optimization call (only for the returned score).
+    fn eval_test(&self, &[f64]) -> f64;
+    /// Function to evaluate a set of parameters also given the loop index as parameter.rand
+    /// In addition to the parameters, the loop index is provided to allow selection of the same batch.
+    /// Return the score towards the target (optimizer maximizes).
+    /// Only used during training (very often).
+    fn eval_train(&self, &[f64], usize) -> f64;
 }
 
 /// Definition of the optimizer traits, to dynamically allow different optimizers
@@ -378,8 +384,7 @@ impl Optimizer for Adamax
 
 
 /// Evolution-Strategy optimizer class. Optimizes given parameters towards a maximum evaluation-score.
-#[derive(Clone)]
-pub struct ES<Feval:Evaluator+Clone, Opt:Optimizer+Clone>
+pub struct ES<Feval:Evaluator, Opt:Optimizer>
 {
     dim:usize, //problem dimensionality
     params:Vec<f64>, //current parameters
@@ -390,7 +395,7 @@ pub struct ES<Feval:Evaluator+Clone, Opt:Optimizer+Clone>
     samples:usize, //number of mirror-samples per step to approximate the gradient
 }
 
-impl<Feval:Evaluator+Clone> ES<Feval, SGD>
+impl<Feval:Evaluator> ES<Feval, SGD>
 {
     /// Shortcut for ES::new(...) using SGD:
     /// Create a new ES-Optimizer using SGA (create SGD object with the given parameters).
@@ -404,7 +409,7 @@ impl<Feval:Evaluator+Clone> ES<Feval, SGD>
     }
 }
 
-impl<Feval:Evaluator+Clone> ES<Feval, Adam>
+impl<Feval:Evaluator> ES<Feval, Adam>
 {
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
@@ -432,7 +437,7 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adam>
     }
 }
 
-impl<Feval:Evaluator+Clone> ES<Feval, Adamax>
+impl<Feval:Evaluator> ES<Feval, Adamax>
 {
     /// Shortcut for ES::new(...) using Adamax:
     /// Create a new ES-Optimizer using Adamax (create Adam object with the given parameters, rest left to default).
@@ -459,7 +464,7 @@ impl<Feval:Evaluator+Clone> ES<Feval, Adamax>
     }
 }
 
-impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
+impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
 {
     /// Create a new ES-Optimizer
     /// evaluator = object with Evaluator trait that computes the objetive-score based on the paramters
@@ -584,8 +589,8 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
                     *neg = *p - *neg;
                 }
                 //evaluate test parameters
-                let scorepos = self.eval.eval(&testparampos);
-                let scoreneg = self.eval.eval(&testparamneg);
+                let scorepos = self.eval.eval_train(&testparampos, _i);
+                let scoreneg = self.eval.eval_train(&testparamneg, _i);
                 //calculate grad sum update
                 for (g, e) in grad.iter_mut().zip(eps.iter())
                 {
@@ -600,7 +605,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             add_inplace(&mut self.params, &delta);
         }
         
-        (self.eval.eval(&self.params), norm(&grad))
+        (self.eval.eval_test(&self.params), norm(&grad))
     }
     
     /// Optimize for n steps.
@@ -630,8 +635,8 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
                     *neg = *p - *neg;
                 }
                 //evaluate parameters and save scores
-                let scorepos = self.eval.eval(&testparampos);
-                let scoreneg = self.eval.eval(&testparamneg);
+                let scorepos = self.eval.eval_train(&testparampos, _i);
+                let scoreneg = self.eval.eval_train(&testparamneg, _i);
                 scores.push((i, false, scorepos));
                 scores.push((i, true, scoreneg));
             }
@@ -655,7 +660,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             add_inplace(&mut self.params, &delta);
         }
         
-        (self.eval.eval(&self.params), norm(&grad))
+        (self.eval.eval_test(&self.params), norm(&grad))
     }
     
     /// Optimize for n steps (evaluation in parallel).
@@ -687,8 +692,8 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters and save scores
-                    *scorepos = self.eval.eval(&testparampos);
-                    *scoreneg = self.eval.eval(&testparamneg);
+                    *scorepos = self.eval.eval_train(&testparampos, _i);
+                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
                 });
             //then add up to compute the gradient sequentially (could only do parallel with mutex on grad)
             scores.iter().enumerate().for_each(|(i, (scorepos, scoreneg))|
@@ -707,7 +712,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             add_inplace(&mut self.params, &delta);
         }
         
-        (self.eval.eval(&self.params), norm(&grad))
+        (self.eval.eval_test(&self.params), norm(&grad))
     }
     
     /// Optimize for n steps (evaluation in parallel).
@@ -744,7 +749,7 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
                     }
                     add_inplace(&mut testparam, &self.params);
                     //evaluate parameters and save scores
-                    *score = self.eval.eval(&testparam);
+                    *score = self.eval.eval_train(&testparam, _i);
                 });
             //compute the centered ranks and calculate the summed result to compute the gradient
             sort_scores(&mut scores);
@@ -766,9 +771,10 @@ impl<Feval:Evaluator+Clone, Opt:Optimizer+Clone> ES<Feval, Opt>
             add_inplace(&mut self.params, &delta);
         }
         
-        (self.eval.eval(&self.params), norm(&grad))
+        (self.eval.eval_test(&self.params), norm(&grad))
     }
 }
+
 
 /// Generate a vector of random numbers with 0 mean and std std, normally distributed.
 /// Using specified RNG.

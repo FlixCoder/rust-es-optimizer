@@ -2,7 +2,7 @@ extern crate esopt;
 extern crate rand;
 
 use esopt::*;
-use rand::Rng;
+use rand::prelude::*;
 
 const DEGREE:usize = 3;
 const REGULARIZE:f64 = 0.01; //own L1 reg. factor
@@ -93,9 +93,9 @@ impl PolynomeEval
 impl Evaluator for PolynomeEval
 {
     //evaluate as inverted mean absolute error to target (we want to minimize instead of maximize)
-    fn eval(&self, params:&[f64]) -> f64
+    fn eval_train(&self, params:&[f64], _:usize) -> f64
     {
-        let mut rng = rand::thread_rng();
+        let mut rng = thread_rng();
         //calculate mean absolute error of random batch of points -> seems to accept outliers
         let mut mae = 0.0;
         let n = 4; //batch size
@@ -107,6 +107,31 @@ impl Evaluator for PolynomeEval
             mae += error.abs();
         }
         mae /= n as f64;
+        //regularize using L1
+        let mut l1 = 0.0;
+        for val in params.iter()
+        {
+            l1 += val.abs();
+        }
+        l1 /= params.len() as f64;
+        l1 *= REGULARIZE;
+        //return
+        -(mae + l1)
+    }
+    
+    //evaluate as inverted mean absolute error to target (we want to minimize instead of maximize)
+    //here all data is used for deterministic progess monitoring
+    fn eval_test(&self, params:&[f64]) -> f64
+    {
+        //calculate mean absolute error
+        let mut mae = 0.0;
+        for i in 0..self.target.len()
+        {
+            let point = &self.target[i];
+            let error = point.1 - calc_f(params, point.0);
+            mae += error.abs();
+        }
+        mae /= self.target.len() as f64;
         //regularize using L1
         let mut l1 = 0.0;
         for val in params.iter()

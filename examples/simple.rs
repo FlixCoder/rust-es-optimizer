@@ -36,9 +36,14 @@ struct ExampleEval
 impl Evaluator for ExampleEval
 {
     //compute the negative absolute error (maximize to get close to target)
-    fn eval(&self, params:&[f64]) -> f64
+    fn eval_test(&self, params:&[f64]) -> f64
     {
         let error = self.target - params[0];
         -error.abs()
+    }
+    
+    fn eval_train(&self, params:&[f64], _:usize) -> f64
+    {
+        self.eval_test(params)
     }
 }
