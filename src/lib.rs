@@ -9,8 +9,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 //TODO:
-//do score standardization instead of ranked?
-//parallel grad calc etc.
+//implement score standardization additionnaly/in either of the methods
 
 
 /// Definition of standard evaluator trait.
@@ -680,7 +679,6 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
-            grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
             let mut scores = vec![(0.0, 0.0); self.samples];
             scores.par_iter_mut().enumerate().for_each(|(i, (scorepos, scoreneg))|
@@ -700,6 +698,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     *scoreneg = self.eval.eval_train(&testparamneg, _i);
                 });
             //then add up to compute the gradient sequentially (could only do parallel with mutex on grad)
+            /*grad = vec![0.0; self.dim];
             scores.iter().enumerate().for_each(|(i, (scorepos, scoreneg))|
                 {
                     let mut rng = SmallRng::seed_from_u64(seed + i as u64);
@@ -708,7 +707,14 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     {
                         *g += *e * (*scorepos - *scoreneg);
                     }
-                });
+                });*/
+            grad = scores.par_iter().enumerate().map(|(i, (scorepos, scoreneg))|
+                {
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
+                    let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    mul_scalar(&mut eps, *scorepos - *scoreneg);
+                    eps
+                }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
@@ -766,6 +772,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     mul_scalar(&mut eps, negfactor * centered_rank);
                     eps
                 }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
+                //if reduce saves too much and takes to much memory: do serial (normal iter) and initialize grad before,
+                //sum components to grad in loop (for_each); see optimize_par for code
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
