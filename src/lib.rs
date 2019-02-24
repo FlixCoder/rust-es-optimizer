@@ -4,11 +4,13 @@ extern crate rand;
 extern crate rayon;
 
 use std::cmp::Ordering;
-use rand::distributions::{Normal, Distribution};
+use rand::distributions::Normal;
 use rand::prelude::*;
 use rayon::prelude::*;
 
 //TODO:
+//do score standardization instead of ranked?
+//parallel grad calc etc.
 
 
 /// Definition of standard evaluator trait.
@@ -594,7 +596,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                 //calculate grad sum update
                 for (g, e) in grad.iter_mut().zip(eps.iter())
                 {
-                    *g += *e * scorepos - *e * scoreneg;
+                    *g += *e * (scorepos - scoreneg);
                 }
             }
             //calculate gradient from the sum
@@ -620,12 +622,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
+            grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
             let mut scores = Vec::new();
             for i in 0..self.samples
             {
                 //repeatable eps generation to save memory
-                let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                let mut rng = SmallRng::seed_from_u64(seed + i as u64);
                 //gen and compute test parameters
                 let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
                 let mut testparamneg = testparampos.clone();
@@ -644,7 +647,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
             sort_scores(&mut scores);
             scores.iter().enumerate().for_each(|(rank, (i, neg, _score))|
                 {
-                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
+                    let mut rng = SmallRng::seed_from_u64(seed + *i as u64);
                     let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     let negfactor = if *neg { -1.0 } else { 1.0 };
                     let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
@@ -677,12 +680,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         for _i in 0..n
         {
             //approximate gradient with self.samples double-sided samples
+            grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
             let mut scores = vec![(0.0, 0.0); self.samples];
             scores.par_iter_mut().enumerate().for_each(|(i, (scorepos, scoreneg))|
                 {
                     //repeatable eps generation to save memory
-                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
                     //gen and compute test parameters
                     let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
                     let mut testparamneg = testparampos.clone();
@@ -698,11 +702,11 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
             //then add up to compute the gradient sequentially (could only do parallel with mutex on grad)
             scores.iter().enumerate().for_each(|(i, (scorepos, scoreneg))|
                 {
-                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + i as u64);
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
                     let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     for (g, e) in grad.iter_mut().zip(eps.iter())
                     {
-                        *g += *e * *scorepos - *e * *scoreneg;
+                        *g += *e * (*scorepos - *scoreneg);
                     }
                 });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
@@ -740,7 +744,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
             scores.par_iter_mut().for_each(|(i, neg, score)|
                 {
                     //repeatable eps generation to save memory
-                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
+                    let mut rng = SmallRng::seed_from_u64(seed + *i as u64);
                     //gen and compute test parameters
                     let mut testparam = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
                     if *neg
@@ -753,17 +757,15 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                 });
             //compute the centered ranks and calculate the summed result to compute the gradient
             sort_scores(&mut scores);
-            scores.iter().enumerate().for_each(|(rank, (i, neg, _score))|
+            grad = scores.par_iter().enumerate().map(|(rank, (i, neg, _score))|
                 {
-                    let mut rng:SmallRng = SeedableRng::seed_from_u64(seed + *i as u64);
-                    let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    let mut rng = SmallRng::seed_from_u64(seed + *i as u64);
+                    let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     let negfactor = if *neg { -1.0 } else { 1.0 };
                     let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
-                    for (g, e) in grad.iter_mut().zip(eps.iter())
-                    {
-                        *g += *e * negfactor * centered_rank;
-                    }
-                });
+                    mul_scalar(&mut eps, negfactor * centered_rank);
+                    eps
+                }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
             mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
