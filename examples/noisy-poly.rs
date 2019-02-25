@@ -5,7 +5,7 @@ use esopt::*;
 use rand::prelude::*;
 
 const DEGREE:usize = 3;
-const REGULARIZE:f64 = 0.01; //own L1 reg. factor
+const REGULARIZE:f64 = 0.025; //own L1 reg. factor
 
 
 fn main()
@@ -41,7 +41,7 @@ fn main()
     for i in 0..5
     {
         let n = 200;
-        let res = es.optimize_ranked_par(n); //optimize for n steps
+        let res = es.optimize_std_par(n); //optimize for n steps
         println!("After {:5} iterations:", (i+1) * n);
         println!("-MAE: {:7.4}", res.0);
         println!("Gradnorm: {:7.5}", res.1);

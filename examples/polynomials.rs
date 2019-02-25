@@ -27,16 +27,16 @@ fn main()
     let params = gen_rnd_vec(DEGREE+1, 0.1); //generate random initial parameters
     
     //create ES-Optimizer
-    let mut es = ES::new_with_sgd(eval, 0.5, 0.1, 0.0); //Evolution-Strategy-Optimizer using optimizer and evaluator
+    let mut es = ES::new_with_sgd(eval, 0.75, 0.1, 0.0); //Evolution-Strategy-Optimizer using optimizer and evaluator
     es.set_params(params) //initial parameters (important to specify the problem dimension, default is vec![0.0])
-        .set_std(0.05) //parameter noise standard deviation to approximate the gradient
-        .set_samples(50); //number of mirrored samples to use to approximate the gradient
+        .set_std(0.5) //parameter noise standard deviation to approximate the gradient
+        .set_samples(25); //number of mirrored samples to use to approximate the gradient
     
     //track the optimizer's results
     for i in 0..5
     {
-        let n = 20;
-        let res = es.optimize(n); //optimize for n steps
+        let n = 5;
+        let res = es.optimize_ranked(n); //optimize for n steps
         println!("After {:5} iterations:", (i+1) * n);
         println!("-MAE: {:7.4}", res.0);
         println!("Gradnorm: {:7.5}", res.1);
