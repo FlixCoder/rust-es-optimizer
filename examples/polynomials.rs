@@ -3,7 +3,7 @@ extern crate esopt;
 use esopt::*;
 
 const DEGREE:usize = 2;
-const REGULARIZE:f64 = 0.025; //own L1 reg. factor
+const REGULARIZE:Float = 0.025; //own L1 reg. factor
 
 
 fn main()
@@ -46,7 +46,7 @@ fn main()
 }
 
 
-fn calc_f(factors:&[f64], x:f64) -> f64
+fn calc_f(factors:&[Float], x:Float) -> Float
 {
     let mut result = factors[0];
     let mut current_pow = 1.0;
@@ -58,7 +58,7 @@ fn calc_f(factors:&[f64], x:f64) -> f64
     result
 }
 
-fn print_f(fct:&[f64])
+fn print_f(fct:&[Float])
 {
     let mut str = String::new();
     for i in 0..fct.len()
@@ -74,12 +74,12 @@ fn print_f(fct:&[f64])
 #[derive(Clone)]
 struct PolynomeEval
 {
-    target:Vec<(f64,f64)>, //points that should be matched by the polynomial function
+    target:Vec<(Float,Float)>, //points that should be matched by the polynomial function
 }
 
 impl PolynomeEval
 {
-    pub fn new(points:Vec<(f64,f64)>) -> PolynomeEval
+    pub fn new(points:Vec<(Float,Float)>) -> PolynomeEval
     {
         PolynomeEval { target: points }
     }
@@ -88,7 +88,7 @@ impl PolynomeEval
 impl Evaluator for PolynomeEval
 {
     //evaluate as inverted mean absolute error to target (we want to minimize instead of maximize)
-    fn eval_test(&self, params:&[f64]) -> f64
+    fn eval_test(&self, params:&[Float]) -> Float
     {
         //calculate mean absolute error
         let mut mae = 0.0;
@@ -98,20 +98,20 @@ impl Evaluator for PolynomeEval
             let error = point.1 - calc_f(params, point.0);
             mae += error.abs();
         }
-        mae /= self.target.len() as f64;
+        mae /= self.target.len() as Float;
         //regularize using L1
         let mut l1 = 0.0;
         for val in params.iter()
         {
             l1 += val.abs();
         }
-        l1 /= params.len() as f64;
+        l1 /= params.len() as Float;
         l1 *= REGULARIZE;
         //return
         -(mae + l1)
     }
     
-    fn eval_train(&self, params:&[f64], _:usize) -> f64
+    fn eval_train(&self, params:&[Float], _:usize) -> Float
     {
         self.eval_test(params)
     }

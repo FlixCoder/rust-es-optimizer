@@ -8,6 +8,10 @@ use rand::distributions::Normal;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+pub type Float = f32;
+#[cfg(feature = "floats-f64")]
+pub type Float = f64;
+
 //TODO:
 
 
@@ -17,12 +21,12 @@ pub trait Evaluator
     /// Function to evaluate a set of parameters given as parameter.
     /// Return the score towards the target (optimizer maximizes).
     /// Only used once per optimization call (only for the returned score).
-    fn eval_test(&self, &[f64]) -> f64;
+    fn eval_test(&self, &[Float]) -> Float;
     /// Function to evaluate a set of parameters also given the loop index as parameter.rand
     /// In addition to the parameters, the loop index is provided to allow selection of the same batch.
     /// Return the score towards the target (optimizer maximizes).
     /// Only used during training (very often).
-    fn eval_train(&self, &[f64], usize) -> f64;
+    fn eval_train(&self, &[Float], usize) -> Float;
 }
 
 /// Definition of the optimizer traits, to dynamically allow different optimizers
@@ -31,7 +35,7 @@ pub trait Optimizer
     /// Function to compute the delta step/update later applied to the parameters
     /// Takes parameters and gradient as input
     /// Returns delta vector
-    fn get_delta(&mut self, &[f64], &[f64]) -> Vec<f64>;
+    fn get_delta(&mut self, &[Float], &[Float]) -> Vec<Float>;
 }
 
 /// SGD Optimizer, which actually is SGA here (stochastic gradient ascent)
@@ -39,10 +43,10 @@ pub trait Optimizer
 #[derive(Debug, Clone)]
 pub struct SGD
 {
-    lr:f64, //learning rate
-    lambda:f64, //weight decay coefficient
-    beta:f64, //momentum coefficient
-    lastv:Vec<f64>, //last momentum gradient
+    lr:Float, //learning rate
+    lambda:Float, //weight decay coefficient
+    beta:Float, //momentum coefficient
+    lastv:Vec<Float>, //last momentum gradient
 }
 
 impl SGD
@@ -53,7 +57,7 @@ impl SGD
         SGD { lr: 0.01, lambda: 0.0, beta: 0.0, lastv: vec![0.0] }
     }
     
-    pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
+    pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
         {
@@ -65,7 +69,7 @@ impl SGD
     }
     
     /// Set lambda factor for weight decay
-    pub fn set_lambda(&mut self, coeff:f64) -> &mut Self
+    pub fn set_lambda(&mut self, coeff:Float) -> &mut Self
     {
         if coeff < 0.0
         {
@@ -77,7 +81,7 @@ impl SGD
     }
     
     /// Set beta factor for momentum
-    pub fn set_beta(&mut self, factor:f64) -> &mut Self
+    pub fn set_beta(&mut self, factor:Float) -> &mut Self
     {
         if factor < 0.0 || factor >= 1.0
         {
@@ -92,7 +96,7 @@ impl SGD
 impl Optimizer for SGD
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
+    fn get_delta(&mut self, params:&[Float], grad:&[Float]) -> Vec<Float>
     {
         if self.lastv.len() != params.len()
         { //initialize with zero gradient
@@ -120,15 +124,15 @@ impl Optimizer for SGD
 #[derive(Debug, Clone)]
 pub struct Adam
 {
-    lr:f64, //learning rate
-    lambda:f64, //weight decay coefficient
-    beta1:f64, //exponential moving average factor
-    beta2:f64, //exponential second moment average factor (squared gradient)
-    eps:f64, //small epsilon to avoid divide by zero (fuzz factor)
+    lr:Float, //learning rate
+    lambda:Float, //weight decay coefficient
+    beta1:Float, //exponential moving average factor
+    beta2:Float, //exponential second moment average factor (squared gradient)
+    eps:Float, //small epsilon to avoid divide by zero (fuzz factor)
     t:usize, //number of taken timesteps
-    avggrad1:Vec<f64>, //first order moment (avg)
-    avggrad2:Vec<f64>, //second oder moment (squared)
-    grad2max:Vec<f64>, //maximum avggrad2 vector, to implement amsgrad
+    avggrad1:Vec<Float>, //first order moment (avg)
+    avggrad2:Vec<Float>, //second oder moment (squared)
+    grad2max:Vec<Float>, //maximum avggrad2 vector, to implement amsgrad
     amsgrad:bool, //indicate wether to use amsgrad
 }
 
@@ -141,7 +145,7 @@ impl Adam
         Adam { lr: 0.001, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
     }
     
-    pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
+    pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
         {
@@ -153,7 +157,7 @@ impl Adam
     }
     
     /// Set lambda factor for weight decay
-    pub fn set_lambda(&mut self, coeff:f64) -> &mut Self
+    pub fn set_lambda(&mut self, coeff:Float) -> &mut Self
     {
         if coeff < 0.0
         {
@@ -165,7 +169,7 @@ impl Adam
     }
     
     /// Set beta1 coefficient (for exponential moving average of first moment)
-    pub fn set_beta1(&mut self, beta:f64) -> &mut Self
+    pub fn set_beta1(&mut self, beta:Float) -> &mut Self
     {
         if beta < 0.0 || beta >= 1.0
         {
@@ -177,7 +181,7 @@ impl Adam
     }
     
     /// Set beta2 coefficient (for exponential moving average of second moment)
-    pub fn set_beta2(&mut self, beta:f64) -> &mut Self
+    pub fn set_beta2(&mut self, beta:Float) -> &mut Self
     {
         if beta < 0.0 || beta >= 1.0
         {
@@ -189,7 +193,7 @@ impl Adam
     }
     
     /// Set epsilon to avoid divide by zero (fuzz factor)
-    pub fn set_eps(&mut self, epsilon:f64) -> &mut Self
+    pub fn set_eps(&mut self, epsilon:Float) -> &mut Self
     {
         if epsilon < 0.0
         {
@@ -218,7 +222,7 @@ impl Adam
 impl Optimizer for Adam
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
+    fn get_delta(&mut self, params:&[Float], grad:&[Float]) -> Vec<Float>
     {
         if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
         { //initialize with zero moments
@@ -232,7 +236,7 @@ impl Optimizer for Adam
         
         //timestep + unbias factor
         self.t += 1;
-        let lr_unbias = self.lr * (1.0 - self.beta2.powf(self.t as f64)).sqrt() / (1.0 - self.beta1.powf(self.t as f64));
+        let lr_unbias = self.lr * (1.0 - self.beta2.powf(self.t as Float)).sqrt() / (1.0 - self.beta1.powf(self.t as Float));
         
         //update exponential moving averages and compute delta (parameter update)
         let mut delta = grad.to_vec();
@@ -264,14 +268,14 @@ impl Optimizer for Adam
 #[derive(Debug, Clone)]
 pub struct Adamax
 {
-    lr:f64, //learning rate
-    lambda:f64, //weight decay coefficient
-    beta1:f64, //exponential moving average factor
-    beta2:f64, //exponential second moment average factor (squared gradient)
-    eps:f64, //small epsilon to avoid divide by zero (fuzz factor)
+    lr:Float, //learning rate
+    lambda:Float, //weight decay coefficient
+    beta1:Float, //exponential moving average factor
+    beta2:Float, //exponential second moment average factor (squared gradient)
+    eps:Float, //small epsilon to avoid divide by zero (fuzz factor)
     t:usize, //number of taken timesteps
-    avggrad1:Vec<f64>, //first order moment (avg)
-    avggrad2:Vec<f64>, //second oder moment (squared)
+    avggrad1:Vec<Float>, //first order moment (avg)
+    avggrad2:Vec<Float>, //second oder moment (squared)
 }
 
 impl Adamax
@@ -283,7 +287,7 @@ impl Adamax
         Adamax { lr: 0.002, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 0.0, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0] }
     }
     
-    pub fn set_lr(&mut self, learning_rate:f64) -> &mut Self
+    pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
         {
@@ -295,7 +299,7 @@ impl Adamax
     }
     
     /// Set lambda factor for weight decay
-    pub fn set_lambda(&mut self, coeff:f64) -> &mut Self
+    pub fn set_lambda(&mut self, coeff:Float) -> &mut Self
     {
         if coeff < 0.0
         {
@@ -307,7 +311,7 @@ impl Adamax
     }
     
     /// Set beta1 coefficient (for exponential moving average of first moment)
-    pub fn set_beta1(&mut self, beta:f64) -> &mut Self
+    pub fn set_beta1(&mut self, beta:Float) -> &mut Self
     {
         if beta < 0.0 || beta >= 1.0
         {
@@ -319,7 +323,7 @@ impl Adamax
     }
     
     /// Set beta2 coefficient (for exponential moving average of second moment)
-    pub fn set_beta2(&mut self, beta:f64) -> &mut Self
+    pub fn set_beta2(&mut self, beta:Float) -> &mut Self
     {
         if beta < 0.0 || beta >= 1.0
         {
@@ -331,7 +335,7 @@ impl Adamax
     }
     
     /// Set epsilon to avoid divide by zero (fuzz factor)
-    pub fn set_eps(&mut self, epsilon:f64) -> &mut Self
+    pub fn set_eps(&mut self, epsilon:Float) -> &mut Self
     {
         if epsilon < 0.0
         {
@@ -352,7 +356,7 @@ impl Adamax
 impl Optimizer for Adamax
 {
     /// Compute delta update from params and gradient
-    fn get_delta(&mut self, params:&[f64], grad:&[f64]) -> Vec<f64>
+    fn get_delta(&mut self, params:&[Float], grad:&[Float]) -> Vec<Float>
     {
         if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
         { //initialize with zero moments
@@ -362,7 +366,7 @@ impl Optimizer for Adamax
         
         //timestep + unbias factor
         self.t += 1;
-        let lr_unbias = self.lr / (1.0 - self.beta1.powf(self.t as f64));
+        let lr_unbias = self.lr / (1.0 - self.beta1.powf(self.t as Float));
         
         //update exponential moving averages and compute delta (parameter update)
         let mut delta = grad.to_vec();
@@ -387,11 +391,11 @@ impl Optimizer for Adamax
 pub struct ES<Feval:Evaluator, Opt:Optimizer>
 {
     dim:usize, //problem dimensionality
-    params:Vec<f64>, //current parameters
+    params:Vec<Float>, //current parameters
     opt:Opt, //chosen optimizer
     eval:Feval, //evaluator function
     
-    std:f64, //standard deviation to calculate the noise for parameters
+    std:Float, //standard deviation to calculate the noise for parameters
     samples:usize, //number of mirror-samples per step to approximate the gradient
 }
 
@@ -399,7 +403,7 @@ impl<Feval:Evaluator> ES<Feval, SGD>
 {
     /// Shortcut for ES::new(...) using SGD:
     /// Create a new ES-Optimizer using SGA (create SGD object with the given parameters).
-    pub fn new_with_sgd(evaluator:Feval, learning_rate:f64, beta:f64, lambda:f64) -> ES<Feval, SGD>
+    pub fn new_with_sgd(evaluator:Feval, learning_rate:Float, beta:Float, lambda:Float) -> ES<Feval, SGD>
     {
         let mut optimizer = SGD::new();
         optimizer.set_lr(learning_rate)
@@ -414,7 +418,7 @@ impl<Feval:Evaluator> ES<Feval, Adam>
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
     /// Change these paramters using method get_opt_mut().set_<...>(...).
-    pub fn new_with_adam(evaluator:Feval, learning_rate:f64, lambda:f64) -> ES<Feval, Adam>
+    pub fn new_with_adam(evaluator:Feval, learning_rate:Float, lambda:Float) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
         optimizer.set_lr(learning_rate)
@@ -424,7 +428,7 @@ impl<Feval:Evaluator> ES<Feval, Adam>
     
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
-    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64, amsgrad:bool) -> ES<Feval, Adam>
+    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float, eps:Float, amsgrad:bool) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
         optimizer.set_lr(learning_rate)
@@ -442,7 +446,7 @@ impl<Feval:Evaluator> ES<Feval, Adamax>
     /// Shortcut for ES::new(...) using Adamax:
     /// Create a new ES-Optimizer using Adamax (create Adam object with the given parameters, rest left to default).
     /// Change these paramters using method get_opt_mut().set_<...>(...).
-    pub fn new_with_adamax(evaluator:Feval, learning_rate:f64, lambda:f64) -> ES<Feval, Adamax>
+    pub fn new_with_adamax(evaluator:Feval, learning_rate:Float, lambda:Float) -> ES<Feval, Adamax>
     {
         let mut optimizer = Adamax::new();
         optimizer.set_lr(learning_rate)
@@ -452,7 +456,7 @@ impl<Feval:Evaluator> ES<Feval, Adamax>
     
     /// Shortcut for ES::new(...) using Adam:
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
-    pub fn new_with_adamax_ex(evaluator:Feval, learning_rate:f64, lambda:f64, beta1:f64, beta2:f64, eps:f64) -> ES<Feval, Adamax>
+    pub fn new_with_adamax_ex(evaluator:Feval, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float, eps:Float) -> ES<Feval, Adamax>
     {
         let mut optimizer = Adamax::new();
         optimizer.set_lr(learning_rate)
@@ -477,7 +481,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     
     /// Set the parameters (potentially reinitializing the process)
     /// params = set of parameters to optimize
-    pub fn set_params(&mut self, params:Vec<f64>) -> &mut Self
+    pub fn set_params(&mut self, params:Vec<Float>) -> &mut Self
     {
         self.params = params;
         self.dim = self.params.len();
@@ -505,7 +509,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Humanoid example in the paper used 0.02 as an example (default).
     /// Probably best to choose in dependence of evaluator output size.
     /// Tweak learning rate to fit to the std.
-    pub fn set_std(&mut self, noise:f64) -> &mut Self
+    pub fn set_std(&mut self, noise:Float) -> &mut Self
     {
         if noise <= 0.0
         {
@@ -530,7 +534,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     }
     
     /// Get the current parameters (as ref)
-    pub fn get_params(&self) -> &Vec<f64>
+    pub fn get_params(&self) -> &Vec<Float>
     {
         &self.params
     }
@@ -548,7 +552,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     }
     
     /// Get the current parameters (as mut)
-    pub fn get_params_mut(&mut self) -> &mut Vec<f64>
+    pub fn get_params_mut(&mut self) -> &mut Vec<Float>
     {
         &mut self.params
     }
@@ -568,7 +572,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Optimize for n steps.
     /// Uses the evaluator's score to calculate the gradients.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize(&mut self, n:usize) -> (Float, Float)
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
         
@@ -602,7 +606,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                 }
             }
             //calculate gradient from the sum
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -615,7 +619,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Optimize for n steps.
     /// Uses the centered ranks to calculate the gradients.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize_ranked(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize_ranked(&mut self, n:usize) -> (Float, Float)
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
         
@@ -652,13 +656,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     let mut rng = SmallRng::seed_from_u64(seed + *i as u64);
                     let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     let negfactor = if *neg { -1.0 } else { 1.0 };
-                    let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
+                    let centered_rank = rank as Float / (self.samples as Float - 0.5) - 1.0;
                     for (g, e) in grad.iter_mut().zip(eps.iter())
                     {
                         *g += *e * negfactor * centered_rank;
                     }
                 });
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -671,7 +675,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Optimize for n steps.
     /// Uses the standardized scores to calculate the gradients.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize_std(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize_std(&mut self, n:usize) -> (Float, Float)
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
         
@@ -712,7 +716,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *g += *e * (*scorepos - *scoreneg) / std;
                     }
                 });
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -726,7 +730,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Uses the evaluator's score to calculate the gradients.
     /// Optimizer and Evaluator must satisfy the Sync trait.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize_par(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -756,7 +760,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     mul_scalar(&mut eps, scorepos - scoreneg);
                     eps
                 }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -770,7 +774,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Uses the centered ranks to calculate the gradients.
     /// Optimizer and Evaluator must satisfy the Sync trait.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize_ranked_par(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize_ranked_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -809,13 +813,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     let mut rng = SmallRng::seed_from_u64(seed + *i as u64);
                     let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     let negfactor = if *neg { -1.0 } else { 1.0 };
-                    let centered_rank = rank as f64 / (self.samples as f64 - 0.5) - 1.0;
+                    let centered_rank = rank as Float / (self.samples as Float - 0.5) - 1.0;
                     mul_scalar(&mut eps, negfactor * centered_rank);
                     eps
                 }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
                 //if reduce saves too much and takes too much memory: do serial (normal iter) and initialize grad before,
                 //sum components to grad in loop (for_each);
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -829,7 +833,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Optimizer and Evaluator must satisfy the Sync trait.
     /// Uses the standardized scores to calculate the gradients.
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
-    pub fn optimize_std_par(&mut self, n:usize) -> (f64, f64)
+    pub fn optimize_std_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
         let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -870,7 +874,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                 }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
                 //if reduce saves too much and takes too much memory: do serial (normal iter) and initialize grad before,
                 //sum components to grad in loop (for_each);
-            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as f64 * self.std));
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
             //calculate the delta update using the optimizer
             let delta = self.opt.get_delta(&self.params, &grad);
             //update the parameters
@@ -884,23 +888,23 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
 
 /// Generate a vector of random numbers with 0 mean and std std, normally distributed.
 /// Using specified RNG.
-fn gen_rnd_vec_rng<RNG: Rng>(rng:&mut RNG, n:usize, std:f64) -> Vec<f64>
+fn gen_rnd_vec_rng<RNG: Rng>(rng:&mut RNG, n:usize, std:Float) -> Vec<Float>
 {
-    let normal = Normal::new(0.0, std);
-    normal.sample_iter(rng).take(n).collect()
+    let normal = Normal::new(0.0, std as f64);
+    normal.sample_iter(rng).take(n).map(|x| x as Float).collect()
 }
 
 /// Generate a vector of random numbers with 0 mean and std std, normally distributed.
 /// Using standard thread_rng.
-pub fn gen_rnd_vec(n:usize, std:f64) -> Vec<f64>
+pub fn gen_rnd_vec(n:usize, std:Float) -> Vec<Float>
 {
     let mut rng = thread_rng();
-    let normal = Normal::new(0.0, std);
-    normal.sample_iter(&mut rng).take(n).collect()
+    let normal = Normal::new(0.0, std as f64);
+    normal.sample_iter(&mut rng).take(n).map(|x| x as Float).collect()
 }
 
 /// Add a second vector onto the first vector in place
-fn add_inplace(v1:&mut [f64], v2:&[f64])
+fn add_inplace(v1:&mut [Float], v2:&[Float])
 {
     for (val1, val2) in v1.iter_mut().zip(v2.iter())
     {
@@ -909,7 +913,7 @@ fn add_inplace(v1:&mut [f64], v2:&[f64])
 }
 
 /// Multiplies a scalar to a vector
-fn mul_scalar(vec:&mut [f64], scalar:f64)
+fn mul_scalar(vec:&mut [Float], scalar:Float)
 {
     for val in vec.iter_mut()
     {
@@ -918,7 +922,7 @@ fn mul_scalar(vec:&mut [f64], scalar:f64)
 }
 
 /// Calculates the norm of a vector
-fn norm(vec:&[f64]) -> f64
+fn norm(vec:&[Float]) -> Float
 {
     let mut norm = 0.0;
     for val in vec.iter()
@@ -929,11 +933,11 @@ fn norm(vec:&[f64]) -> f64
 }
 
 /// calculate mean and standard deviation of the scores
-fn get_mean_std(vec:&[(f64, f64)]) -> (f64, f64)
+fn get_mean_std(vec:&[(Float, Float)]) -> (Float, Float)
 {
     let mut mean = 0.0;
     vec.iter().for_each(|(scorepos, scoreneg)| { mean += *scorepos + *scoreneg; });
-    mean /= (2 * vec.len()) as f64;
+    mean /= (2 * vec.len()) as Float;
     
     let mut std = 0.0;
     vec.iter().for_each(|(scorepos, scoreneg)|
@@ -943,14 +947,14 @@ fn get_mean_std(vec:&[(f64, f64)]) -> (f64, f64)
             diff = *scoreneg - mean;
             std += diff * diff;
         });
-    std /= (2 * vec.len()) as f64;
+    std /= (2 * vec.len()) as Float;
     std = std.sqrt();
     
     (mean, std)
 }
 
 /// Sorts the internal score-vector, so that ranks can be computed
-fn sort_scores<T,U>(vec:&mut Vec<(T, U, f64)>)
+fn sort_scores<T,U>(vec:&mut Vec<(T, U, Float)>)
 { //worst score in front
     vec.sort_unstable_by(|ref r1, ref r2| { //partial cmp and check for NaN
             let r = (r1.2).partial_cmp(&r2.2);

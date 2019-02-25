@@ -29,20 +29,20 @@ fn main()
 #[derive(Clone)]
 struct ExampleEval
 {
-    target:f64,
+    target:Float,
 }
 
 //implement Evaluator trait to allow usage in the optimizer
 impl Evaluator for ExampleEval
 {
     //compute the negative absolute error (maximize to get close to target)
-    fn eval_test(&self, params:&[f64]) -> f64
+    fn eval_test(&self, params:&[Float]) -> Float
     {
         let error = self.target - params[0];
         -error.abs()
     }
     
-    fn eval_train(&self, params:&[f64], _:usize) -> f64
+    fn eval_train(&self, params:&[Float], _:usize) -> Float
     {
         self.eval_test(params)
     }
