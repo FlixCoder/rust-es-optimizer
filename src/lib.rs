@@ -57,6 +57,7 @@ impl SGD
         SGD { lr: 0.01, lambda: 0.0, beta: 0.0, lastv: vec![0.0] }
     }
     
+    /// Set learning rate
     pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
@@ -120,7 +121,7 @@ impl Optimizer for SGD
     }
 }
 
-/// Adam Optimizer
+/// Adam Optimizer, with possibility of using AdaBound
 #[derive(Debug, Clone)]
 pub struct Adam
 {
@@ -132,19 +133,23 @@ pub struct Adam
     t:usize, //number of taken timesteps
     avggrad1:Vec<Float>, //first order moment (avg)
     avggrad2:Vec<Float>, //second oder moment (squared)
-    grad2max:Vec<Float>, //maximum avggrad2 vector, to implement amsgrad
-    amsgrad:bool, //indicate wether to use amsgrad
+    adabound:bool, //switch whether to use the AdaBound variant
+    final_lr:Float, //final LR to use using AdaBound (SGD)
+    gamma:Float, //convergence speed of bounding functions for AdaBound
 }
 
 impl Adam
 {
-    /// Create new Adam optimizer instance using default hyperparameters (lr = 0.001, lambda = 0, beta1 = 0.9, beta2 = 0.999, eps = 1e-8, amsgrad = false)
-    /// Also try higher LR; beta2 = 0.99
+    /// Create new Adam optimizer instance using default hyperparameters (lr = 0.001, lambda = 0, beta1 = 0.9, beta2 = 0.999, eps = 1e-8,
+    /// adabound = false, final_lr = 0.1, gamma: 0.001)
+    /// Also try higher LR; beta2 = 0.99; try adabound!
     pub fn new() -> Adam
     {
-        Adam { lr: 0.001, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0], grad2max: vec![0.0], amsgrad: false }
+        Adam { lr: 0.001, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0],
+            adabound: false, final_lr: 0.1, gamma: 0.001 }
     }
     
+    /// Set learning rate
     pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
@@ -152,6 +157,18 @@ impl Adam
             panic!("Learning rate must be greater than zero!");
         }
         self.lr = learning_rate;
+        
+        self
+    }
+    
+    /// Set final learning rate for AdaBound (SGD)
+    pub fn set_final_lr(&mut self, learning_rate:Float) -> &mut Self
+    {
+        if learning_rate <= 0.0
+        {
+            panic!("Learning rate must be greater than zero!");
+        }
+        self.final_lr = learning_rate;
         
         self
     }
@@ -164,6 +181,18 @@ impl Adam
             panic!("Lambda coefficient may not be smaller than zero!");
         }
         self.lambda = coeff;
+        
+        self
+    }
+    
+    /// Set gamma factor for AdaBound bounding convergence
+    pub fn set_gamma(&mut self, coeff:Float) -> &mut Self
+    {
+        if coeff < 0.0 || coeff >= 1.0
+        {
+            panic!("Gamma coefficient is in appropriate!");
+        }
+        self.gamma = coeff;
         
         self
     }
@@ -204,11 +233,10 @@ impl Adam
         self
     }
     
-    /// Set whether to use AMSGrad or not
-    pub fn set_amsgrad(&mut self, amsgrad:bool) -> &mut Self
+    /// Set usage of AdaBound
+    pub fn set_adabound(&mut self, use_bound:bool) -> &mut Self
     {
-        self.amsgrad = amsgrad;
-        
+        self.adabound = use_bound;
         self
     }
     
@@ -216,6 +244,14 @@ impl Adam
     pub fn get_t(&self) -> usize
     {
         self.t
+    }
+    
+    /// Set the timestep (to allow continuation of approach towards SGD in AdaBound).
+    /// Keep in mind, that debiasing does not work with zero-initialized hessians, but higher initial t
+    pub fn set_t(&mut self, t:usize) -> &mut Self
+    {
+        self.t = t;
+        self
     }
 }
 
@@ -228,28 +264,28 @@ impl Optimizer for Adam
         { //initialize with zero moments
             self.avggrad1 = vec![0.0; params.len()];
             self.avggrad2 = vec![0.0; params.len()];
-            if self.amsgrad
-            {
-                self.grad2max = vec![0.0; params.len()];
-            }
         }
         
         //timestep + unbias factor
         self.t += 1;
         let lr_unbias = self.lr * (1.0 - self.beta2.powf(self.t as Float)).sqrt() / (1.0 - self.beta1.powf(self.t as Float));
+        //dynamic bound
+        let lower_bound = (1.0 - 1.0 / (self.gamma * self.t as Float + 1.0)) * self.final_lr;
+        let upper_bound = (1.0 + 1.0 / (self.gamma * self.t as Float)) * self.final_lr;
         
         //update exponential moving averages and compute delta (parameter update)
         let mut delta = grad.to_vec();
-        for (i, (((g1, g2), d), p)) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter()).enumerate()
+        for (((g1, g2), d), p) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter())
         {
             //moment 1 and 2 update
             *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
             *g2 = self.beta2 * *g2 + (1.0 - self.beta2) * *d * *d;
             //delta update
-            if self.amsgrad
+            if self.adabound
             {
-                self.grad2max[i] = self.grad2max[i].max(*g2); //amsgrad update
-                *d = lr_unbias * *g1 / (self.grad2max[i].sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
+                //dynamic bound
+                let bound_lr = (lr_unbias / (g2.sqrt() + self.eps)).max(lower_bound).min(upper_bound);
+                *d = bound_lr * *g1;
             }
             else
             {
@@ -287,6 +323,7 @@ impl Adamax
         Adamax { lr: 0.002, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 0.0, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0] }
     }
     
+    /// Set learning rate
     pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
     {
         if learning_rate <= 0.0
@@ -415,7 +452,7 @@ impl<Feval:Evaluator> ES<Feval, SGD>
 
 impl<Feval:Evaluator> ES<Feval, Adam>
 {
-    /// Shortcut for ES::new(...) using Adam:
+    /// Shortcut for ES::new(...) using Adam (/AdaBound):
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters, rest left to default).
     /// Change these paramters using method get_opt_mut().set_<...>(...).
     pub fn new_with_adam(evaluator:Feval, learning_rate:Float, lambda:Float) -> ES<Feval, Adam>
@@ -426,17 +463,17 @@ impl<Feval:Evaluator> ES<Feval, Adam>
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
     
-    /// Shortcut for ES::new(...) using Adam:
+    /// Shortcut for ES::new(...) using Adam (/AdaBound):
     /// Create a new ES-Optimizer using Adam (create Adam object with the given parameters).
-    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float, eps:Float, amsgrad:bool) -> ES<Feval, Adam>
+    pub fn new_with_adam_ex(evaluator:Feval, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float, adabound:bool, final_lr:Float) -> ES<Feval, Adam>
     {
         let mut optimizer = Adam::new();
         optimizer.set_lr(learning_rate)
             .set_lambda(lambda)
             .set_beta1(beta1)
             .set_beta2(beta2)
-            .set_eps(eps)
-            .set_amsgrad(amsgrad);
+            .set_adabound(adabound)
+            .set_final_lr(final_lr);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
 }
