@@ -1,9 +1,16 @@
 //! General implementation of the ES strategy described in https://arxiv.org/pdf/1703.03864.pdf
 
+#[macro_use]
+extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
 extern crate rand;
 extern crate rayon;
 
 use std::cmp::Ordering;
+use std::io::prelude::*;
+use std::fs::File;
 use rand::distributions::Normal;
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -13,6 +20,7 @@ pub type Float = f32;
 pub type Float = f64;
 
 //TODO:
+//AdamaxBound ?
 
 
 /// Definition of standard evaluator trait.
@@ -40,7 +48,7 @@ pub trait Optimizer
 
 /// SGD Optimizer, which actually is SGA here (stochastic gradient ascent)
 /// Momentum and weight decay is available
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SGD
 {
     lr:Float, //learning rate
@@ -92,6 +100,36 @@ impl SGD
         
         self
     }
+    
+    /// Encodes the optimizer as a JSON string.
+    pub fn to_json(&self) -> String
+    {
+        serde_json::to_string(self).expect("Encoding JSON failed!")
+    }
+
+    /// Builds a new optimizer from a JSON string.
+    pub fn from_json(encoded:&str) -> SGD
+    {
+        serde_json::from_str(encoded).expect("Decoding JSON failed!")
+    }
+    
+    /// Saves the model to a file
+    pub fn save(&self, file:&str) -> Result<(), std::io::Error>
+    {
+        let mut file = File::create(file)?;
+        let json = self.to_json();
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Creates a model from a previously saved file
+    pub fn load(file:&str) -> Result<SGD, std::io::Error>
+    {
+        let mut file = File::open(file)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        Ok(SGD::from_json(&json))
+    }
 }
 
 impl Optimizer for SGD
@@ -122,7 +160,7 @@ impl Optimizer for SGD
 }
 
 /// Adam Optimizer, with possibility of using AdaBound
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adam
 {
     lr:Float, //learning rate
@@ -246,12 +284,34 @@ impl Adam
         self.t
     }
     
-    /// Set the timestep (to allow continuation of approach towards SGD in AdaBound).
-    /// Keep in mind, that debiasing does not work with zero-initialized hessians, but higher initial t
-    pub fn set_t(&mut self, t:usize) -> &mut Self
+    /// Encodes the optimizer as a JSON string.
+    pub fn to_json(&self) -> String
     {
-        self.t = t;
-        self
+        serde_json::to_string(self).expect("Encoding JSON failed!")
+    }
+
+    /// Builds a new optimizer from a JSON string.
+    pub fn from_json(encoded:&str) -> Adam
+    {
+        serde_json::from_str(encoded).expect("Decoding JSON failed!")
+    }
+    
+    /// Saves the model to a file
+    pub fn save(&self, file:&str) -> Result<(), std::io::Error>
+    {
+        let mut file = File::create(file)?;
+        let json = self.to_json();
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Creates a model from a previously saved file
+    pub fn load(file:&str) -> Result<Adam, std::io::Error>
+    {
+        let mut file = File::open(file)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        Ok(Adam::from_json(&json))
     }
 }
 
@@ -301,7 +361,7 @@ impl Optimizer for Adam
 }
 
 /// Adam Optimizer
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adamax
 {
     lr:Float, //learning rate
@@ -387,6 +447,36 @@ impl Adamax
     pub fn get_t(&self) -> usize
     {
         self.t
+    }
+    
+    /// Encodes the optimizer as a JSON string.
+    pub fn to_json(&self) -> String
+    {
+        serde_json::to_string(self).expect("Encoding JSON failed!")
+    }
+
+    /// Builds a new optimizer from a JSON string.
+    pub fn from_json(encoded:&str) -> Adamax
+    {
+        serde_json::from_str(encoded).expect("Decoding JSON failed!")
+    }
+    
+    /// Saves the model to a file
+    pub fn save(&self, file:&str) -> Result<(), std::io::Error>
+    {
+        let mut file = File::create(file)?;
+        let json = self.to_json();
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Creates a model from a previously saved file
+    pub fn load(file:&str) -> Result<Adamax, std::io::Error>
+    {
+        let mut file = File::open(file)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        Ok(Adamax::from_json(&json))
     }
 }
 
