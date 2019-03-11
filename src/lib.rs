@@ -853,6 +853,68 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         (self.eval.eval_test(&self.params), norm(&grad))
     }
     
+    /// Optimize for n steps.
+    /// Uses the normalized scores to calculate the gradients.
+    /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
+    pub fn optimize_norm(&mut self, n:usize) -> (Float, Float)
+    {
+        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
+        
+        let mut grad = vec![0.0; self.dim];
+        //for n iterations:
+        for _i in 0..n
+        {
+            //approximate gradient with self.samples double-sided samples
+            grad = vec![0.0; self.dim];
+            //first generate and fill whole vector of scores
+            let mut scores = vec![(0.0, 0.0); self.samples];
+            let mut maximum = -1.0;
+            scores.iter_mut().enumerate().for_each(|(i, (scorepos, scoreneg))|
+                {
+                    //repeatable eps generation to save memory
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
+                    //gen and compute test parameters
+                    let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
+                    let mut testparamneg = testparampos.clone();
+                    for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
+                    {
+                        *pos = *p + *pos;
+                        *neg = *p - *neg;
+                    }
+                    //evaluate parameters and save scores
+                    *scorepos = self.eval.eval_train(&testparampos, _i);
+                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    //calculate maxmimum absolute score
+                    if scorepos.abs() > maximum
+                    {
+                        maximum = scorepos.abs();
+                    }
+                    if scoreneg.abs() > maximum
+                    {
+                        maximum = scoreneg.abs();
+                    }
+                });
+            //sum up and calculate gradient from the sum
+            scores.iter().enumerate().for_each(|(i, (scorepos, scoreneg))|
+                {
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
+                    let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    for (g, e) in grad.iter_mut().zip(eps.iter())
+                    {
+                        //subtraction by mean cancels out
+                        *g += *e * (*scorepos - *scoreneg) / maximum;
+                    }
+                });
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
+            //calculate the delta update using the optimizer
+            let delta = self.opt.get_delta(&self.params, &grad);
+            //update the parameters
+            add_inplace(&mut self.params, &delta);
+        }
+        
+        (self.eval.eval_test(&self.params), norm(&grad))
+    }
+    
     /// Optimize for n steps (evaluation in parallel).
     /// Uses the evaluator's score to calculate the gradients.
     /// Optimizer and Evaluator must satisfy the Sync trait.
@@ -997,6 +1059,72 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
                     //subtraction by mean cancels out
                     mul_scalar(&mut eps, (*scorepos - *scoreneg) / std);
+                    eps
+                }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
+                //if reduce saves too much and takes too much memory: do serial (normal iter) and initialize grad before,
+                //sum components to grad in loop (for_each);
+            mul_scalar(&mut grad, 1.0 / ((2 * self.samples) as Float * self.std));
+            //calculate the delta update using the optimizer
+            let delta = self.opt.get_delta(&self.params, &grad);
+            //update the parameters
+            add_inplace(&mut self.params, &delta);
+        }
+        
+        (self.eval.eval_test(&self.params), norm(&grad))
+    }
+    
+    /// Optimize for n steps (in parallel).
+    /// Optimizer and Evaluator must satisfy the Sync trait.
+    /// Uses the normalized scores to calculate the gradients.
+    /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
+    pub fn optimize_norm_par(&mut self, n:usize) -> (Float, Float)
+        where Opt:Sync, Feval:Sync
+    {
+        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
+        
+        let mut grad = vec![0.0; self.dim];
+        //for n iterations:
+        for _i in 0..n
+        {
+            //approximate gradient with self.samples double-sided samples
+            //first generate and fill whole vector of scores
+            let mut scores = vec![(0.0, 0.0); self.samples];
+            scores.par_iter_mut().enumerate().for_each(|(i, (scorepos, scoreneg))|
+                {
+                    //repeatable eps generation to save memory
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
+                    //gen and compute test parameters
+                    let mut testparampos = gen_rnd_vec_rng(&mut rng, self.dim, self.std); //eps
+                    let mut testparamneg = testparampos.clone();
+                    for ((pos, neg), p) in testparampos.iter_mut().zip(testparamneg.iter_mut()).zip(self.params.iter())
+                    {
+                        *pos = *p + *pos;
+                        *neg = *p - *neg;
+                    }
+                    //evaluate parameters and save scores
+                    *scorepos = self.eval.eval_train(&testparampos, _i);
+                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                });
+            //calculate maxmimum absolute score
+            let mut maximum = -1.0;
+            scores.iter().for_each(|x|
+                {
+                    if x.0.abs() > maximum
+                    {
+                        maximum = x.0.abs();
+                    }
+                    if x.1.abs() > maximum
+                    {
+                        maximum = x.1.abs();
+                    }
+                });
+            //sum up and calculate gradient from the sum
+            grad = scores.par_iter().enumerate().map(|(i, (scorepos, scoreneg))|
+                {
+                    let mut rng = SmallRng::seed_from_u64(seed + i as u64);
+                    let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
+                    //subtraction by mean cancels out
+                    mul_scalar(&mut eps, (*scorepos - *scoreneg) / maximum);
                     eps
                 }).reduce(|| vec![0.0; self.dim], |mut a, b| { add_inplace(&mut a, &b); a });
                 //if reduce saves too much and takes too much memory: do serial (normal iter) and initialize grad before,
