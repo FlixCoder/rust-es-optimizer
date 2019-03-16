@@ -12,7 +12,7 @@ fn main()
     let mut es = ES::new_with_sgd(eval, 0.75, 0.0, 0.0); //using evaluator, lr, beta(momentum), lambda(weight decay)
     es.set_params(vec![0.0]) //initial parameters (important to specify the problem dimension, default is vec![0.0])
         .set_std(50.0) //parameter noise standard deviation to approximate the gradient
-        .set_samples(50); //number of mirrored samples to use to approximate the gradient
+        .set_samples(10); //number of mirrored samples to use to approximate the gradient
     
     //track the optimizer's results
     for _ in 0..5

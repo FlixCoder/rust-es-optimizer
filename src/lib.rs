@@ -701,17 +701,18 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize(&mut self, n:usize) -> (Float, Float)
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             grad = vec![0.0; self.dim];
             for i in 0..self.samples
             {
-                //repeatable eps generation to save memory
+                //(repeatable) eps generation
                 let mut rng = SmallRng::seed_from_u64(seed + i as u64);
                 //generate random epsilon
                 let eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
@@ -748,12 +749,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize_ranked(&mut self, n:usize) -> (Float, Float)
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
@@ -804,12 +806,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize_std(&mut self, n:usize) -> (Float, Float)
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
@@ -858,12 +861,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     /// Returns a tuple (score, gradnorm), which is the latest parameters' evaluated score and the norm of the last gradient/delta change.
     pub fn optimize_norm(&mut self, n:usize) -> (Float, Float)
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             grad = vec![0.0; self.dim];
             //first generate and fill whole vector of scores
@@ -922,16 +926,17 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     pub fn optimize_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             grad = (0..self.samples).into_par_iter().map(|i|
                 {
-                    //repeatable eps generation to save memory
+                    //(repeatable) eps generation
                     let mut rng = SmallRng::seed_from_u64(seed + i as u64);
                     //gen and compute test parameters
                     let mut eps = gen_rnd_vec_rng(&mut rng, self.dim, self.std);
@@ -966,12 +971,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     pub fn optimize_ranked_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             //first generate and fill whole vector of scores
             let mut scores = vec![(0, false, 0.0); 2*self.samples];
@@ -1025,12 +1031,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     pub fn optimize_std_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             //first generate and fill whole vector of scores
             let mut scores = vec![(0.0, 0.0); self.samples];
@@ -1080,12 +1087,13 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
     pub fn optimize_norm_par(&mut self, n:usize) -> (Float, Float)
         where Opt:Sync, Feval:Sync
     {
-        let seed = random::<u64>() % (std::u64::MAX - self.samples as u64);
-        
+        let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
         for _i in 0..n
         {
+            //generate seed for repeatable random vector generation
+            let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
             //approximate gradient with self.samples double-sided samples
             //first generate and fill whole vector of scores
             let mut scores = vec![(0.0, 0.0); self.samples];
