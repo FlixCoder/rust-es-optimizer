@@ -44,6 +44,8 @@ pub trait Optimizer
     /// Takes parameters and gradient as input
     /// Returns delta vector
     fn get_delta(&mut self, &[Float], &[Float]) -> Vec<Float>;
+    /// Get number of iterations already processed.
+    fn get_t(&self) -> usize;
 }
 
 /// SGD Optimizer, which actually is SGA here (stochastic gradient ascent)
@@ -55,6 +57,7 @@ pub struct SGD
     lambda:Float, //weight decay coefficient
     beta:Float, //momentum coefficient
     lastv:Vec<Float>, //last momentum gradient
+    t:usize, //number of iterations/timesteps
 }
 
 impl SGD
@@ -62,7 +65,7 @@ impl SGD
     /// Create new SGD optimizer instance using default hyperparameters (lr = 0.01)
     pub fn new() -> SGD
     {
-        SGD { lr: 0.01, lambda: 0.0, beta: 0.0, lastv: vec![0.0] }
+        SGD { lr: 0.01, lambda: 0.0, beta: 0.0, lastv: vec![0.0], t: 0 }
     }
     
     /// Set learning rate
@@ -153,9 +156,16 @@ impl Optimizer for SGD
             //add weight decay
             *d -= self.lr * self.lambda * *p;
         }
+        self.t += 1;
         
         //return
         delta
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    fn get_t(&self) -> usize
+    {
+        self.t
     }
 }
 
@@ -278,12 +288,6 @@ impl Adam
         self
     }
     
-    /// Retrieve the timestep (to allow computing manual learning rate decay)
-    pub fn get_t(&self) -> usize
-    {
-        self.t
-    }
-    
     /// Encodes the optimizer as a JSON string.
     pub fn to_json(&self) -> String
     {
@@ -357,6 +361,12 @@ impl Optimizer for Adam
         
         //return
         delta
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    fn get_t(&self) -> usize
+    {
+        self.t
     }
 }
 
@@ -443,12 +453,6 @@ impl Adamax
         self
     }
     
-    /// Retrieve the timestep (to allow computing manual learning rate decay)
-    pub fn get_t(&self) -> usize
-    {
-        self.t
-    }
-    
     /// Encodes the optimizer as a JSON string.
     pub fn to_json(&self) -> String
     {
@@ -510,6 +514,12 @@ impl Optimizer for Adamax
         
         //return
         delta
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    fn get_t(&self) -> usize
+    {
+        self.t
     }
 }
 
@@ -704,7 +714,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -725,8 +736,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     *neg = *p - *neg;
                 }
                 //evaluate test parameters
-                let scorepos = self.eval.eval_train(&testparampos, _i);
-                let scoreneg = self.eval.eval_train(&testparamneg, _i);
+                let scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                let scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                 //calculate grad sum update
                 for (g, e) in grad.iter_mut().zip(eps.iter())
                 {
@@ -752,7 +763,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -773,8 +785,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     *neg = *p - *neg;
                 }
                 //evaluate parameters and save scores
-                let scorepos = self.eval.eval_train(&testparampos, _i);
-                let scoreneg = self.eval.eval_train(&testparamneg, _i);
+                let scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                let scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                 scores.push((i, false, scorepos));
                 scores.push((i, true, scoreneg));
             }
@@ -809,7 +821,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -830,8 +843,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters and save scores
-                    *scorepos = self.eval.eval_train(&testparampos, _i);
-                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    *scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                    *scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                 });
             //calculate std, mean
             let (_mean, std) = get_mean_std(&mut scores);
@@ -864,7 +877,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -886,8 +900,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters and save scores
-                    *scorepos = self.eval.eval_train(&testparampos, _i);
-                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    *scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                    *scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                     //calculate maxmimum absolute score
                     if scorepos.abs() > maximum
                     {
@@ -929,7 +943,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -948,8 +963,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters to compute scores
-                    let scorepos = self.eval.eval_train(&testparampos, _i);
-                    let scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    let scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                    let scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                     //compute gradient parts and the sum up in reduce to calculate the gradient
                     mul_scalar(&mut eps, scorepos - scoreneg);
                     eps
@@ -974,7 +989,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -999,7 +1015,7 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                     }
                     add_inplace(&mut testparam, &self.params);
                     //evaluate parameters and save scores
-                    *score = self.eval.eval_train(&testparam, _i);
+                    *score = self.eval.eval_train(&testparam, t + iterations);
                 });
             //compute the centered ranks and calculate the summed result to compute the gradient
             sort_scores(&mut scores);
@@ -1034,7 +1050,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -1054,8 +1071,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters and save scores
-                    *scorepos = self.eval.eval_train(&testparampos, _i);
-                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    *scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                    *scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                 });
             //calculate std, mean
             let (_mean, std) = get_mean_std(&mut scores);
@@ -1090,7 +1107,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
         let mut rng = thread_rng();
         let mut grad = vec![0.0; self.dim];
         //for n iterations:
-        for _i in 0..n
+        let t = self.opt.get_t();
+        for iterations in 0..n
         {
             //generate seed for repeatable random vector generation
             let seed = rng.gen::<u64>() % (std::u64::MAX - self.samples as u64);
@@ -1110,8 +1128,8 @@ impl<Feval:Evaluator, Opt:Optimizer> ES<Feval, Opt>
                         *neg = *p - *neg;
                     }
                     //evaluate parameters and save scores
-                    *scorepos = self.eval.eval_train(&testparampos, _i);
-                    *scoreneg = self.eval.eval_train(&testparamneg, _i);
+                    *scorepos = self.eval.eval_train(&testparampos, t + iterations);
+                    *scoreneg = self.eval.eval_train(&testparamneg, t + iterations);
                 });
             //calculate maxmimum absolute score
             let mut maximum = -1.0;
