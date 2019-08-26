@@ -11,6 +11,8 @@ extern crate rayon;
 use std::cmp::Ordering;
 use std::io::prelude::*;
 use std::fs::File;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use rand::distributions::Normal;
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -21,6 +23,7 @@ pub type Float = f64;
 
 //TODO:
 //AdamaxBound ?
+//DEBUG: show delta and grad?
 
 
 /// Definition of standard evaluator trait.
@@ -370,7 +373,174 @@ impl Optimizer for Adam
     }
 }
 
-/// Adam Optimizer
+/// RAdam Optimizer (Rectified Adam)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RAdam
+{
+    lr:Float, //learning rate
+    lambda:Float, //weight decay coefficient
+    beta1:Float, //exponential moving average factor
+    beta2:Float, //exponential second moment average factor (squared gradient)
+    eps:Float, //small epsilon to avoid divide by zero (fuzz factor)
+    t:usize, //number of taken timesteps
+    avggrad1:Vec<Float>, //first order moment (avg)
+    avggrad2:Vec<Float>, //second oder moment (squared)
+}
+
+impl RAdam
+{
+    /// Create new RAdam optimizer instance using default hyperparameters (lr = 0.001, lambda = 0, beta1 = 0.9, beta2 = 0.999, eps = 1e-8)
+    /// Also try higher LR; beta2 = 0.99; try adabound!
+    pub fn new() -> RAdam
+    {
+        RAdam { lr: 0.001, lambda: 0.0, beta1: 0.9, beta2: 0.999, eps: 1e-8, t: 0, avggrad1: vec![0.0], avggrad2: vec![0.0] }
+    }
+    
+    /// Set learning rate
+    pub fn set_lr(&mut self, learning_rate:Float) -> &mut Self
+    {
+        if learning_rate <= 0.0
+        {
+            panic!("Learning rate must be greater than zero!");
+        }
+        self.lr = learning_rate;
+        
+        self
+    }
+    
+    /// Set lambda factor for weight decay
+    pub fn set_lambda(&mut self, coeff:Float) -> &mut Self
+    {
+        if coeff < 0.0
+        {
+            panic!("Lambda coefficient may not be smaller than zero!");
+        }
+        self.lambda = coeff;
+        
+        self
+    }
+    
+    /// Set beta1 coefficient (for exponential moving average of first moment)
+    pub fn set_beta1(&mut self, beta:Float) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta1 = beta;
+        
+        self
+    }
+    
+    /// Set beta2 coefficient (for exponential moving average of second moment)
+    pub fn set_beta2(&mut self, beta:Float) -> &mut Self
+    {
+        if beta < 0.0 || beta >= 1.0
+        {
+            panic!(format!("Prohibited beta coefficient: {}. Must be in [0.0, 1.0)!", beta));
+        }
+        self.beta2 = beta;
+        
+        self
+    }
+    
+    /// Set epsilon to avoid divide by zero (fuzz factor)
+    pub fn set_eps(&mut self, epsilon:Float) -> &mut Self
+    {
+        if epsilon < 0.0
+        {
+            panic!("Epsilon must be >= 0!");
+        }
+        self.eps = epsilon;
+        
+        self
+    }
+    
+    /// Encodes the optimizer as a JSON string.
+    pub fn to_json(&self) -> String
+    {
+        serde_json::to_string(self).expect("Encoding JSON failed!")
+    }
+
+    /// Builds a new optimizer from a JSON string.
+    pub fn from_json(encoded:&str) -> RAdam
+    {
+        serde_json::from_str(encoded).expect("Decoding JSON failed!")
+    }
+    
+    /// Saves the model to a file
+    pub fn save(&self, file:&str) -> Result<(), std::io::Error>
+    {
+        let mut file = File::create(file)?;
+        let json = self.to_json();
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Creates a model from a previously saved file
+    pub fn load(file:&str) -> Result<RAdam, std::io::Error>
+    {
+        let mut file = File::open(file)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        Ok(RAdam::from_json(&json))
+    }
+}
+
+impl Optimizer for RAdam
+{
+    /// Compute delta update from params and gradient
+    fn get_delta(&mut self, params:&[Float], grad:&[Float]) -> Vec<Float>
+    {
+        if self.avggrad1.len() != params.len() || self.avggrad2.len() != params.len()
+        { //initialize with zero moments
+            self.avggrad1 = vec![0.0; params.len()];
+            self.avggrad2 = vec![0.0; params.len()];
+        }
+        
+        //timestep, bias-correct LR, SMAs for rectification
+        self.t += 1;
+        let t_float = self.t as Float;
+        let beta1_pt = self.beta1.powf(t_float);
+        let beta2_pt = self.beta2.powf(t_float);
+        let sma_inf = 2.0 / (1.0 - self.beta2) - 1.0;
+        let sma_t = sma_inf - 2.0 * t_float * beta2_pt / (1.0 - beta2_pt);
+        let r_t = (((sma_t - 4.0) * (sma_t - 2.0) * sma_inf) / ((sma_inf - 4.0) * (sma_inf - 2.0) * sma_t)).sqrt(); //variance rectification term
+        let lr_unbias1 = self.lr / (1.0 - beta1_pt);
+        let lr_unbias12 = self.lr * (1.0 - beta2_pt).sqrt() / (1.0 - beta1_pt);
+        
+        //update exponential moving averages and compute delta (parameter update)
+        let mut delta = grad.to_vec();
+        for (((g1, g2), d), p) in self.avggrad1.iter_mut().zip(self.avggrad2.iter_mut()).zip(delta.iter_mut()).zip(params.iter())
+        {
+            //moment 1 and 2 update
+            *g1 = self.beta1 * *g1 + (1.0 - self.beta1) * *d;
+            *g2 = self.beta2 * *g2 + (1.0 - self.beta2) * *d * *d;
+            //delta update depending on variance
+            if sma_t > 4.0
+            {
+                *d = lr_unbias12 * r_t * *g1 / (g2.sqrt() + self.eps); //normally it would be -lr_unbias, but we want to maximize
+            }
+            else
+            {
+                *d = lr_unbias1 * *g1; //normally it would be -lr_unbias, but we want to maximize
+            }
+            //weight decay
+            *d -= self.lr * self.lambda * *p;
+        }
+        
+        //return
+        delta
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    fn get_t(&self) -> usize
+    {
+        self.t
+    }
+}
+
+/// Adamax Optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adamax
 {
@@ -523,6 +693,132 @@ impl Optimizer for Adamax
     }
 }
 
+/// Lookahead optimizer on top of other optimizers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Lookahead<Opt:Optimizer>
+{
+    subopt:Opt, //sub-optimizer
+    alpha:Float, //outer step size
+    t:usize, //number of taken timesteps
+    k:usize, //number of steps between paramter synchronizations
+    paramssave:Vec<Float>, //temporary storage of parameters for the k steps
+}
+
+impl<Opt:Optimizer> Lookahead<Opt>
+{
+    /// Create new Lookahead optimizer instance using default hyperparameters (alpha = 0.5, k = 5)
+    pub fn new(opt:Opt) -> Lookahead<Opt>
+    {
+        Lookahead { subopt: opt, alpha: 0.5, t: 0, k: 5, paramssave: Vec::new() }
+    }
+    
+    /// Set outer step size
+    pub fn set_alpha(&mut self, step:Float) -> &mut Self
+    {
+        if step <= 0.0
+        {
+            panic!("Step size must be greater than zero!");
+        }
+        self.alpha = step;
+        
+        self
+    }
+    
+    pub fn set_k(&mut self, syncfreq:usize) -> &mut Self
+    {
+        if syncfreq < 1
+        {
+            panic!("Synchronization frequency in Lookahead must be at least k=1");
+        }
+        self.k = syncfreq;
+        
+        self
+    }
+    
+    pub fn get_opt(&self) -> &Opt
+    {
+        &self.subopt
+    }
+    
+    pub fn get_opt_mut(&mut self) -> &mut Opt
+    {
+        &mut self.subopt
+    }
+}
+
+impl<Opt:Optimizer+Serialize+DeserializeOwned> Lookahead<Opt>
+{
+    /// Encodes the optimizer as a JSON string.
+    pub fn to_json(&self) -> String
+    {
+        serde_json::to_string(self).expect("Encoding JSON failed!")
+    }
+
+    /// Builds a new optimizer from a JSON string.
+    pub fn from_json(encoded:&str) -> Lookahead<Opt>
+    {
+        serde_json::from_str(encoded).expect("Decoding JSON failed!")
+    }
+    
+    /// Saves the model to a file
+    pub fn save(&self, file:&str) -> Result<(), std::io::Error>
+    {
+        let mut file = File::create(file)?;
+        let json = self.to_json();
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Creates a model from a previously saved file
+    pub fn load(file:&str) -> Result<Lookahead<Opt>, std::io::Error>
+    {
+        let mut file = File::open(file)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        Ok(Lookahead::<Opt>::from_json(&json))
+    }
+}
+
+impl<Opt:Optimizer> Optimizer for Lookahead<Opt>
+{
+    /// Compute delta update from params and gradient
+    fn get_delta(&mut self, params:&[Float], grad:&[Float]) -> Vec<Float>
+    {
+        //save initial parameters on start
+        if self.t == 0
+        {
+            self.paramssave = params.to_vec();
+        }
+        
+        //inner update
+        let mut delta = self.subopt.get_delta(params, grad);
+        
+        //timestep
+        self.t += 1;
+        
+        //outer update
+        if self.t % self.k == 0
+        {
+            for ((ps, p), d) in self.paramssave.iter_mut().zip(params.iter()).zip(delta.iter_mut())
+            {
+                let diff = (*p + *d) - *ps; //difference between initial params and explored params
+                let new = *ps + self.alpha * diff; //outer update target params
+                *d = new - *p; //calculate delta to get from current params to new params
+                *ps = new; //update paramssave
+            }
+        }
+        
+        //return
+        delta
+    }
+    
+    /// Retrieve the timestep (to allow computing manual learning rate decay)
+    fn get_t(&self) -> usize
+    {
+        self.t
+    }
+}
+
 
 /// Evolution-Strategy optimizer class. Optimizes given parameters towards a maximum evaluation-score.
 pub struct ES<Feval:Evaluator, Opt:Optimizer>
@@ -546,6 +842,22 @@ impl<Feval:Evaluator> ES<Feval, SGD>
         optimizer.set_lr(learning_rate)
             .set_beta(beta)
             .set_lambda(lambda);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator> ES<Feval, Lookahead<SGD>>
+{
+    /// Shortcut for ES::new(...) using Lookahead with SGD:
+    /// Create a new ES-Optimizer using Lookahead with SGA (create Lookahead and SGD object with the given parameters).
+    pub fn new_with_lookahead_sgd(evaluator:Feval, k:usize, learning_rate:Float, beta:Float, lambda:Float) -> ES<Feval, Lookahead<SGD>>
+    {
+        let mut optimizer = SGD::new();
+        optimizer.set_lr(learning_rate)
+            .set_beta(beta)
+            .set_lambda(lambda);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_k(k);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
 }
@@ -578,6 +890,94 @@ impl<Feval:Evaluator> ES<Feval, Adam>
     }
 }
 
+impl<Feval:Evaluator> ES<Feval, Lookahead<Adam>>
+{
+    /// Shortcut for ES::new(...) using Lookahead with Adam:
+    /// Create a new ES-Optimizer using Lookahead with Adam (create Lookahead and Adam object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt_mut().set_<...>(...) and get_opt_mut().get_opt_mut().set_<...>(...).
+    pub fn new_with_lookahead_adam(evaluator:Feval, k:usize, learning_rate:Float, lambda:Float) -> ES<Feval, Lookahead<Adam>>
+    {
+        let mut optimizer = Adam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_k(k);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using Adam:
+    /// Create a new ES-Optimizer using Adam (create Lookahead and Adam object with the given parameters).
+    pub fn new_with_lookahead_adam_ex(evaluator:Feval, alpha:Float, k:usize, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float) -> ES<Feval, Lookahead<Adam>>
+    {
+        let mut optimizer = Adam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
+            .set_beta1(beta1)
+            .set_beta2(beta2);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_alpha(alpha)
+            .set_k(k);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator> ES<Feval, RAdam>
+{
+    /// Shortcut for ES::new(...) using RAdam:
+    /// Create a new ES-Optimizer using RAdam (create RAdam object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt_mut().set_<...>(...).
+    pub fn new_with_radam(evaluator:Feval, learning_rate:Float, lambda:Float) -> ES<Feval, RAdam>
+    {
+        let mut optimizer = RAdam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using RAdam:
+    /// Create a new ES-Optimizer using RAdam (create RAdam object with the given parameters).
+    pub fn new_with_radam_ex(evaluator:Feval, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float) -> ES<Feval, RAdam>
+    {
+        let mut optimizer = RAdam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
+            .set_beta1(beta1)
+            .set_beta2(beta2);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator> ES<Feval, Lookahead<RAdam>>
+{
+    /// Shortcut for ES::new(...) using Lookahead with RAdam:
+    /// Create a new ES-Optimizer using Lookahead with RAdam (create Lookahead and RAdam object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt_mut().set_<...>(...) and get_opt_mut().get_opt_mut().set_<...>(...).
+    pub fn new_with_lookahead_radam(evaluator:Feval, k:usize, learning_rate:Float, lambda:Float) -> ES<Feval, Lookahead<RAdam>>
+    {
+        let mut optimizer = RAdam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_k(k);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using RAdam:
+    /// Create a new ES-Optimizer using RAdam (create Lookahead and RAdam object with the given parameters).
+    pub fn new_with_lookahead_radam_ex(evaluator:Feval, alpha:Float, k:usize, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float) -> ES<Feval, Lookahead<RAdam>>
+    {
+        let mut optimizer = RAdam::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
+            .set_beta1(beta1)
+            .set_beta2(beta2);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_alpha(alpha)
+            .set_k(k);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
 impl<Feval:Evaluator> ES<Feval, Adamax>
 {
     /// Shortcut for ES::new(...) using Adamax:
@@ -601,6 +1001,37 @@ impl<Feval:Evaluator> ES<Feval, Adamax>
             .set_beta1(beta1)
             .set_beta2(beta2)
             .set_eps(eps);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+}
+
+impl<Feval:Evaluator> ES<Feval, Lookahead<Adamax>>
+{
+    /// Shortcut for ES::new(...) using Lookahead with Adamax:
+    /// Create a new ES-Optimizer using Lookahead with Adamax (create Lookahead and Adamax object with the given parameters, rest left to default).
+    /// Change these paramters using method get_opt_mut().set_<...>(...) and get_opt_mut().get_opt_mut().set_<...>(...).
+    pub fn new_with_lookahead_adamax(evaluator:Feval, k:usize, learning_rate:Float, lambda:Float) -> ES<Feval, Lookahead<Adamax>>
+    {
+        let mut optimizer = Adamax::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_k(k);
+        ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
+    }
+    
+    /// Shortcut for ES::new(...) using Adamax:
+    /// Create a new ES-Optimizer using Adamax (create Lookahead and Adamax object with the given parameters).
+    pub fn new_with_lookahead_adamax_ex(evaluator:Feval, alpha:Float, k:usize, learning_rate:Float, lambda:Float, beta1:Float, beta2:Float) -> ES<Feval, Lookahead<Adamax>>
+    {
+        let mut optimizer = Adamax::new();
+        optimizer.set_lr(learning_rate)
+            .set_lambda(lambda)
+            .set_beta1(beta1)
+            .set_beta2(beta2);
+        let mut optimizer = Lookahead::new(optimizer);
+        optimizer.set_alpha(alpha)
+            .set_k(k);
         ES { dim: 1, params: vec![0.0], opt: optimizer, eval: evaluator, std: 0.02, samples: 500 }
     }
 }
